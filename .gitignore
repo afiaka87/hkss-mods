@@ -1,0 +1,30 @@
+# Typical Dotnet Ignored Files
+# .NET build output
+bin/
+obj/
+
+# IDE cruft
+.vs/
+.idea/
+.vscode/
+
+# User/solution-specific
+*.user
+*.suo
+*.sln.docstates
+
+# Test & publish artifacts (optional)
+TestResult*
+*.trx
+publish/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+
+# Ignore files vendored for zero-shot learning.
+Vendor/
+
+# Ignore CLAUDE.md
+CLAUDE.md
