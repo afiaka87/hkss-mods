@@ -57,7 +57,7 @@ cp bin/Release/net*/*.dll "../Hollow Knight Silksong/BepInEx/plugins/"
 
 ## Documentation
 
-See [MODS_IDEAS.md](MODS_IDEAS.md) for detailed implementation specifications for all 25 mods.
+See [DESIGN.md](DESIGN.md) for detailed implementation specifications for all 25 mods.
 
 ## Requirements
 
