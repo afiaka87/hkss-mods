@@ -24,28 +24,15 @@ namespace HKSS.DamageNumbers
                 if (actualDamage <= 0)
                     return;
 
-                // Check if this was a critical/special hit based on ACTUAL game mechanics
-                // We detect this from the game's actual multiplier or attack type
-                bool isSpecialAttack = false;
-
-                // If the game applied a significant multiplier, it's a special attack
-                // Normal attacks typically have a multiplier of 1.0f
-                if (hitInstance.Multiplier > 1.2f && DamageNumbersPlugin.ShowCriticalHits.Value)
-                {
-                    // This is a special/boosted attack as determined by the GAME
-                    isSpecialAttack = true;
-                    if (DamageNumbersPlugin.DebugLogging.Value)
-                        DamageNumbersPlugin.Log.LogInfo($"Special attack detected - Multiplier: {hitInstance.Multiplier}");
-                }
 
                 // Get enemy position
                 Vector3 position = __instance.transform.position;
 
                 // Display the ACTUAL damage number - exactly what the game calculated
-                DamageNumberDisplay.ShowDamage(position, actualDamage, isSpecialAttack);
+                DamageNumberDisplay.ShowDamage(position, actualDamage);
 
                 if (DamageNumbersPlugin.DebugLogging.Value)
-                    DamageNumbersPlugin.Log.LogInfo($"Actual damage: {actualDamage} | Multiplier: {hitInstance.Multiplier} | AttackType: {hitInstance.AttackType}");
+                    DamageNumbersPlugin.Log.LogInfo($"Actual damage: {actualDamage}");
             }
             catch (Exception e)
             {
@@ -71,8 +58,8 @@ namespace HKSS.DamageNumbers
                 // Get player position
                 Vector3 position = __instance.transform.position;
 
-                // Display damage number (player damage is shown in red)
-                DamageNumberDisplay.ShowDamage(position, damageAmount, false);
+                // Display damage number
+                DamageNumberDisplay.ShowDamage(position, damageAmount);
 
                 if (DamageNumbersPlugin.DebugLogging.Value)
                     DamageNumbersPlugin.Log.LogInfo($"Player took {damageAmount} damage from {hazardType}");

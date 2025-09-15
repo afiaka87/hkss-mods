@@ -8,7 +8,6 @@ namespace HKSS.DamageNumbers
         private static DamageNumberDisplay instance;
         private readonly List<DamageNumber> activeNumbers = new List<DamageNumber>();
         private GUIStyle normalStyle;
-        private GUIStyle criticalStyle;
 
         private class DamageNumber
         {
@@ -16,7 +15,6 @@ namespace HKSS.DamageNumbers
             public float lifetime;
             public Vector3 worldPosition;
             public Vector3 velocity;
-            public bool isCritical;
             public float scale;
             public Color color;
         }
@@ -34,29 +32,22 @@ namespace HKSS.DamageNumbers
             normalStyle.normal.textColor = ParseColor(DamageNumbersPlugin.NormalColor.Value);
             normalStyle.alignment = TextAnchor.MiddleCenter;
             normalStyle.fontStyle = FontStyle.Bold;
-
-            criticalStyle = new GUIStyle();
-            criticalStyle.fontSize = (int)(DamageNumbersPlugin.FontSize.Value * 1.3f);
-            criticalStyle.normal.textColor = ParseColor(DamageNumbersPlugin.SpecialAttackColor.Value);
-            criticalStyle.alignment = TextAnchor.MiddleCenter;
-            criticalStyle.fontStyle = FontStyle.Bold;
         }
 
-        public static void ShowDamage(Vector3 worldPosition, int damage, bool isCritical = false)
+        public static void ShowDamage(Vector3 worldPosition, int damage)
         {
             if (instance == null || !DamageNumbersPlugin.Enabled.Value)
                 return;
 
-            instance.SpawnDamageNumber(worldPosition, damage, isCritical);
+            instance.SpawnDamageNumber(worldPosition, damage);
         }
 
-        private void SpawnDamageNumber(Vector3 worldPosition, int damage, bool isCritical)
+        private void SpawnDamageNumber(Vector3 worldPosition, int damage)
         {
             var number = new DamageNumber
             {
                 worldPosition = worldPosition + Vector3.up * 0.5f,
-                lifetime = DamageNumbersPlugin.DisplayDuration.Value,
-                isCritical = isCritical
+                lifetime = DamageNumbersPlugin.DisplayDuration.Value
             };
 
             // Set initial velocity with some randomness
@@ -65,19 +56,8 @@ namespace HKSS.DamageNumbers
 
             // Configure text - show ACTUAL damage value
             number.text = damage.ToString();
-
-            if (isCritical && DamageNumbersPlugin.ShowCriticalHits.Value)
-            {
-                // Special attack (nail art, ability, etc) - slightly larger and different color
-                number.color = ParseColor(DamageNumbersPlugin.SpecialAttackColor.Value);
-                number.scale = 1.3f;
-            }
-            else
-            {
-                // Normal attack
-                number.color = ParseColor(DamageNumbersPlugin.NormalColor.Value);
-                number.scale = 1f;
-            }
+            number.color = ParseColor(DamageNumbersPlugin.NormalColor.Value);
+            number.scale = 1f;
 
             activeNumbers.Add(number);
         }
@@ -133,8 +113,8 @@ namespace HKSS.DamageNumbers
                 // Flip Y coordinate (GUI uses top-left origin)
                 screenPos.y = Screen.height - screenPos.y;
 
-                // Set up style based on type
-                GUIStyle style = number.isCritical ? criticalStyle : normalStyle;
+                // Set up style
+                GUIStyle style = normalStyle;
 
                 // Create a copy to modify color
                 var tempStyle = new GUIStyle(style);

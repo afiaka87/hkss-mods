@@ -22,9 +22,7 @@ namespace HKSS.DamageNumbers
         internal static ConfigEntry<float> DisplayDuration;
         internal static ConfigEntry<float> FloatSpeed;
         internal static ConfigEntry<float> FontSize;
-        internal static ConfigEntry<bool> ShowCriticalHits;
         internal static ConfigEntry<string> NormalColor;
-        internal static ConfigEntry<string> SpecialAttackColor;
         internal static ConfigEntry<bool> ShowPlayerDamage;
         internal static ConfigEntry<bool> DebugLogging;
 
@@ -88,25 +86,11 @@ namespace HKSS.DamageNumbers
                 )
             );
 
-            ShowCriticalHits = Config.Bind(
-                "Gameplay",
-                "ShowSpecialAttacks",
-                true,
-                "Highlight attacks with damage multipliers (nail arts, special abilities, etc.)"
-            );
-
             NormalColor = Config.Bind(
                 "Colors",
                 "NormalDamageColor",
                 "#FFFFFF",
                 "Color for normal damage numbers (hex format)"
-            );
-
-            SpecialAttackColor = Config.Bind(
-                "Colors",
-                "SpecialAttackColor",
-                "#FFD700",
-                "Color for special attack damage numbers (nail arts, abilities with multipliers)"
             );
 
             ShowPlayerDamage = Config.Bind(
