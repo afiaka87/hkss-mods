@@ -8,11 +8,13 @@ A collection of 25 info display mods for Hollow Knight: Silksong using BepInEx f
 - [x] **HKSS-DamageNumbers** - Floating damage numbers above enemies
 - [x] **HKSS-VelocityVector** - Real-time speed/direction display with arrow indicator
 - [x] **HKSS-AirTime** - Jump duration tracking with session statistics
-- [x] **HKSS-DashCooldownRadial** - Circular cooldown indicator around character
 - [x] **HKSS-BreadcrumbTrail** - Fading path history with LineRenderer
-- [x] **HKSS-ParryWindowFlash** - Counter timing indicator with screen flash
 - [x] **HKSS-SecretProximity** - Hidden collectible detector with pulse indicator
-- [x] **HKSS-DataExportBus** - External tool integration (OBS, LiveSplit, CSV/NDJSON)
+
+### WIP (2/25)
+- [~] **HKSS-DashCooldownRadial** - Circular cooldown indicator around character
+- [~] **HKSS-ParryWindowFlash** - Counter timing indicator with screen flash
+- [~] **HKSS-DataExportBus** - External tool integration (OBS, LiveSplit, CSV/NDJSON)
 
 ### To Be Implemented (17/25)
 
