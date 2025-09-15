@@ -1,4 +1,4 @@
-# HKSS Damage Numbers
+# hkss-damage-numbers
 
 A BepInEx mod for Hollow Knight: Silksong that displays floating damage numbers when attacking enemies.
 
