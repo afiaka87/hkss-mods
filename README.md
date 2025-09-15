@@ -2,6 +2,23 @@
 
 A collection of 25 info display mods for Hollow Knight: Silksong using BepInEx framework.
 
+## Setup
+
+You will need a runtime called BepInEx that is used to mod a wide variety of Unity-based games including Hollow Knight and Hollow Knight:Silk Song. 
+
+You can find it here: https://github.com/BepInEx/BepInEx/releases/tag/v5.4.23.3
+
+Download the version for your platform. 
+
+## SteamDeck/Linux
+If you're on a Steam Deck, you'll want the `BepInEx_linux_x64...` zip file. 
+
+## Windows
+Similarly if you're on Windows, download the `BepInEx_win_x64...` zip file. 
+
+## MacOS
+Unfortunately I don't have the time to help people get Mac support working, I will just say that it is _maybe_ possible if you're technically savvy enough but you will need to enable rosetta for your SilkSong.app and use `BepInEx_macos_x64...` in your .app directory. But I myself couldn't get this to work so please dont post issues about it. 
+
 ## Mod Implementation Status
 
 ### Completed (8/25)
