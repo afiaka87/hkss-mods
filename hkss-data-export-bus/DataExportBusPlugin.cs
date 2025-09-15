@@ -72,6 +72,9 @@ namespace HKSS.DataExportBus
         public ConfigEntry<bool> EnableRateLimiting { get; private set; }
         public ConfigEntry<int> MaxConnectionsPerIP { get; private set; }
 
+        // LiveSplit Config
+        public ConfigEntry<string> AutoSplitScenes { get; private set; }
+
         void Awake()
         {
             Instance = this;
@@ -198,6 +201,11 @@ namespace HKSS.DataExportBus
             MaxConnectionsPerIP = Config.Bind("Security", "MaxConnectionsPerIP", 5,
                 new ConfigDescription("Max connections per IP address",
                 new AcceptableValueRange<int>(1, 20)));
+
+            // LiveSplit
+            AutoSplitScenes = Config.Bind("LiveSplit", "AutoSplitScenes",
+                "Boss_Defeated,Area_Complete,Major_Item_Obtained",
+                "Comma-separated list of scene names that trigger auto-splits");
         }
 
         private void CreateExportBusObject()

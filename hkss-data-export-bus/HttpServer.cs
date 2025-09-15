@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -19,6 +20,8 @@ namespace HKSS.DataExportBus
         private readonly Queue<GameMetric> metricsQueue = new Queue<GameMetric>();
         private readonly object queueLock = new object();
         private bool isRunning = false;
+        private const int MAX_QUEUE_SIZE = 5000; // Configurable max queue size
+        private readonly SemaphoreSlim requestSemaphore = new SemaphoreSlim(10, 10); // Max 10 concurrent requests
 
         public HttpServer(string bindAddress, int port, string authToken, string allowedOrigins)
         {
@@ -50,7 +53,7 @@ namespace HKSS.DataExportBus
                         if (completedTask == contextTask)
                         {
                             var context = await contextTask;
-                            _ = Task.Run(() => HandleRequest(context), cancellationToken);
+                            _ = Task.Run(async () => await HandleRequestWithLimit(context), cancellationToken);
                         }
                     }
                     catch (HttpListenerException ex) when (ex.ErrorCode == 995) // Listener stopped
@@ -69,12 +72,25 @@ namespace HKSS.DataExportBus
             }
         }
 
+        private async Task HandleRequestWithLimit(HttpListenerContext context)
+        {
+            await requestSemaphore.WaitAsync();
+            try
+            {
+                await HandleRequest(context);
+            }
+            finally
+            {
+                requestSemaphore.Release();
+            }
+        }
+
         private async Task HandleRequest(HttpListenerContext context)
         {
             try
             {
                 // Set CORS headers
-                SetCorsHeaders(context.Response);
+                SetCorsHeaders(context.Request, context.Response);
 
                 // Handle preflight requests
                 if (context.Request.HttpMethod == "OPTIONS")
@@ -155,11 +171,24 @@ namespace HKSS.DataExportBus
             }
         }
 
-        private void SetCorsHeaders(HttpListenerResponse response)
+        private void SetCorsHeaders(HttpListenerRequest request, HttpListenerResponse response)
         {
-            response.Headers.Add("Access-Control-Allow-Origin", string.Join(",", allowedOrigins));
+            var origin = request.Headers["Origin"];
+
+            // Check if origin is allowed and set appropriate CORS header
+            if (!string.IsNullOrEmpty(origin) && allowedOrigins.Any(o => string.Equals(o, origin, StringComparison.OrdinalIgnoreCase)))
+            {
+                response.Headers.Add("Access-Control-Allow-Origin", origin);
+                response.Headers.Add("Vary", "Origin");
+            }
+            else if (allowedOrigins.Contains("*"))
+            {
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+            }
+
             response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
             response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            response.Headers.Add("Access-Control-Max-Age", "600");
         }
 
         private async Task HandleStatus(HttpListenerResponse response)
@@ -323,7 +352,7 @@ namespace HKSS.DataExportBus
             lock (queueLock)
             {
                 metricsQueue.Enqueue(metric);
-                while (metricsQueue.Count > 1000) // Keep last 1000 metrics
+                while (metricsQueue.Count > MAX_QUEUE_SIZE) // Keep last MAX_QUEUE_SIZE metrics
                 {
                     metricsQueue.Dequeue();
                 }
@@ -335,6 +364,7 @@ namespace HKSS.DataExportBus
             isRunning = false;
             listener?.Stop();
             listener?.Close();
+            requestSemaphore?.Dispose();
         }
     }
 }

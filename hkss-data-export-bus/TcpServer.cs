@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -369,14 +370,18 @@ namespace HKSS.DataExportBus
 
         private bool ShouldAutoSplit(string sceneName)
         {
-            // Define which scene transitions should trigger auto-splits
-            var autoSplitScenes = new HashSet<string>
-            {
-                "Boss_Arena",
-                "End_Scene",
-                "Credits"
-                // Add more scene names as needed
-            };
+            // Get auto-split scenes from configuration
+            var configScenes = DataExportBusPlugin.Instance?.AutoSplitScenes?.Value;
+            if (string.IsNullOrEmpty(configScenes))
+                return false;
+
+            // Parse comma-separated list
+            var autoSplitScenes = new HashSet<string>(
+                configScenes.Split(',')
+                    .Select(s => s.Trim())
+                    .Where(s => !string.IsNullOrEmpty(s)),
+                StringComparer.OrdinalIgnoreCase
+            );
 
             return autoSplitScenes.Contains(sceneName);
         }

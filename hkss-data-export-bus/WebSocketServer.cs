@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
@@ -20,9 +21,11 @@ namespace HKSS.DataExportBus
         private readonly List<WebSocketClient> connectedClients = new List<WebSocketClient>();
         private readonly object clientLock = new object();
         private bool isRunning = false;
+        private Timer pingTimer;
+        private const int PING_INTERVAL_MS = 30000; // Ping every 30 seconds
+        private const int PING_TIMEOUT_MS = 10000; // 10 second timeout for pong
 
-        // OBS WebSocket compatibility
-        private int requestIdCounter = 1;
+        // Simplified OBS-like scene management (not full OBS 5.0 protocol)
         private readonly Dictionary<string, object> obsSceneData = new Dictionary<string, object>();
 
         public WebSocketServer(int port, string authToken, string allowedOrigins)
@@ -40,6 +43,9 @@ namespace HKSS.DataExportBus
                 listener.Prefixes.Add($"http://localhost:{port}/");
                 listener.Start();
                 isRunning = true;
+
+                // Start ping timer
+                pingTimer = new Timer(_ => SendPingsToAllClients(), null, PING_INTERVAL_MS, PING_INTERVAL_MS);
 
                 DataExportBusPlugin.ModLogger?.LogInfo($"WebSocket server listening on ws://localhost:{port}/");
 
@@ -81,6 +87,27 @@ namespace HKSS.DataExportBus
                 return;
             }
 
+            // Check origin
+            var origin = context.Request.Headers["Origin"];
+            if (!string.IsNullOrEmpty(origin) && !IsAllowedOrigin(origin))
+            {
+                context.Response.StatusCode = 403;
+                context.Response.Close();
+                return;
+            }
+
+            // Check authentication header if auth is enabled
+            if (!string.IsNullOrEmpty(authToken))
+            {
+                var providedAuth = context.Request.Headers["Authorization"];
+                if (providedAuth != $"Bearer {authToken}")
+                {
+                    context.Response.StatusCode = 401;
+                    context.Response.Close();
+                    return;
+                }
+            }
+
             WebSocketContext webSocketContext = null;
             WebSocketClient client = null;
 
@@ -91,7 +118,7 @@ namespace HKSS.DataExportBus
                 {
                     Id = Guid.NewGuid().ToString(),
                     Socket = webSocketContext.WebSocket,
-                    IsAuthenticated = string.IsNullOrEmpty(authToken)
+                    IsAuthenticated = string.IsNullOrEmpty(authToken) // Auto-auth if no token required
                 };
 
                 lock (clientLock)
@@ -172,6 +199,13 @@ namespace HKSS.DataExportBus
 
                 DataExportBusPlugin.ModLogger?.LogDebug($"WebSocket message received: {messageType}");
 
+                // Check authentication for non-auth messages
+                if (!client.IsAuthenticated && messageType.ToLower() != "auth" && messageType.ToLower() != "authenticate")
+                {
+                    await SendMessage(client, new { type = "error", message = "Authentication required" });
+                    return;
+                }
+
                 switch (messageType.ToLower())
                 {
                     case "auth":
@@ -191,13 +225,20 @@ namespace HKSS.DataExportBus
                         await SendMessage(client, new { type = "pong", timestamp = DateTime.UtcNow });
                         break;
 
-                    // OBS WebSocket compatibility
+                    case "pong":
+                        client.LastPongReceived = DateTime.UtcNow;
+                        client.PingPending = false;
+                        break;
+
+                    // Simplified OBS-like commands (not full OBS 5.0 protocol)
+                    // For actual OBS integration, use the game state events instead
                     case "getversion":
                         await SendOBSResponse(client, requestId, new
                         {
-                            obsWebSocketVersion = "5.0.0",
+                            obsWebSocketVersion = "simplified-1.0",
                             rpcVersion = 1,
-                            supportedImageFormats = new[] { "png", "jpg", "jpeg", "gif" }
+                            supportedImageFormats = new[] { "png", "jpg", "jpeg", "gif" },
+                            note = "This is a simplified OBS-like API, not full OBS 5.0 protocol"
                         });
                         break;
 
@@ -533,9 +574,57 @@ namespace HKSS.DataExportBus
             }
         }
 
+        private void SendPingsToAllClients()
+        {
+            try
+            {
+                List<WebSocketClient> clientsToRemove = new List<WebSocketClient>();
+
+                lock (clientLock)
+                {
+                    foreach (var client in connectedClients.ToList())
+                    {
+                        // Check if client has timed out
+                        if (client.PingPending && (DateTime.UtcNow - client.LastPongReceived).TotalMilliseconds > PING_TIMEOUT_MS)
+                        {
+                            clientsToRemove.Add(client);
+                            DataExportBusPlugin.ModLogger?.LogInfo($"WebSocket client {client.Id} timed out");
+                            continue;
+                        }
+
+                        // Send ping
+                        if (client.Socket.State == WebSocketState.Open)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await SendMessage(client, new { type = "ping", timestamp = DateTime.UtcNow });
+                                    client.PingPending = true;
+                                }
+                                catch { }
+                            });
+                        }
+                    }
+
+                    // Remove timed out clients
+                    foreach (var client in clientsToRemove)
+                    {
+                        connectedClients.Remove(client);
+                        client.Socket?.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error in ping timer: {ex.Message}");
+            }
+        }
+
         public void Stop()
         {
             isRunning = false;
+            pingTimer?.Dispose();
             listener?.Stop();
             listener?.Close();
 
@@ -549,12 +638,28 @@ namespace HKSS.DataExportBus
             }
         }
 
+        private bool IsAllowedOrigin(string origin)
+        {
+            if (allowedOrigins == null || allowedOrigins.Length == 0)
+                return true;
+
+            foreach (var allowed in allowedOrigins)
+            {
+                if (allowed == "*" || string.Equals(allowed, origin, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
         private class WebSocketClient
         {
             public string Id { get; set; }
             public WebSocket Socket { get; set; }
             public bool IsAuthenticated { get; set; }
             public List<string> SubscribedEvents { get; set; } = new List<string>();
+            public DateTime LastPongReceived { get; set; } = DateTime.UtcNow;
+            public bool PingPending { get; set; } = false;
         }
     }
 }

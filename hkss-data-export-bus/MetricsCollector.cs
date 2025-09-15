@@ -297,7 +297,7 @@ namespace HKSS.DataExportBus
 
         [HarmonyPatch(typeof(HealthManager), "TakeDamage")]
         [HarmonyPostfix]
-        public static void OnEnemyDamage(HealthManager __instance, HitInstance hitInstance)
+        public static void OnEnemyDamage(HealthManager __instance, in HitInstance hitInstance)
         {
             if (__instance.gameObject != HeroController.instance?.gameObject)
             {

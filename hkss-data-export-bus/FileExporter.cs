@@ -114,7 +114,7 @@ namespace HKSS.DataExportBus
             var row = new List<string>
             {
                 metric.Timestamp.ToString("o"),
-                metric.EventType
+                EscapeCsvValue(metric.EventType)
             };
 
             // Write header if needed
@@ -142,12 +142,7 @@ namespace HKSS.DataExportBus
                 if (metric.Data.ContainsKey(field))
                 {
                     string value = metric.Data[field]?.ToString() ?? "";
-                    // Escape CSV values
-                    if (value.Contains(",") || value.Contains("\"") || value.Contains("\n"))
-                    {
-                        value = $"\"{value.Replace("\"", "\"\"")}\"";
-                    }
-                    row.Add(value);
+                    row.Add(EscapeCsvValue(value));
                 }
                 else
                 {
@@ -350,6 +345,21 @@ namespace HKSS.DataExportBus
                 currentCsvWriter?.Dispose();
                 currentNdjsonWriter?.Dispose();
             }
+        }
+
+        private string EscapeCsvValue(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return "";
+
+            // Escape CSV values that contain commas, quotes, or newlines
+            if (value.Contains(",") || value.Contains("\"") || value.Contains("\n") || value.Contains("\r"))
+            {
+                // Replace quotes with double quotes and wrap in quotes
+                return $"\"{value.Replace("\"", "\"\"")}\"";
+            }
+
+            return value;
         }
     }
 }
