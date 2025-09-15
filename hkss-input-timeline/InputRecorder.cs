@@ -8,32 +8,38 @@ namespace HKSS.InputTimeline
 {
     public class InputRecorder : MonoBehaviour
     {
-        private static InputRecorder instance;
+        internal static InputRecorder instance;
 
-        // Input event tracking
-        private readonly List<InputEvent> inputHistory = new List<InputEvent>();
-        private readonly Dictionary<string, float> buttonPressStartTimes = new Dictionary<string, float>();
-        private readonly List<ComboSequence> detectedCombos = new List<ComboSequence>();
+        // Track recent actions (3-5 most recent)
+        private readonly Queue<PlayerAction> recentActions = new Queue<PlayerAction>();
+        private int maxActions = 5; // Configurable, defaults to 5
 
-        // Combo detection
-        private readonly float comboWindowTime = 0.5f; // Time between inputs to consider them part of a combo
-        private readonly List<string> currentComboBuffer = new List<string>();
-        private float lastComboInputTime = 0f;
+        // Track previous states to detect transitions
+        private bool wasJumping = false;
+        private bool wasAttacking = false;
+        private bool wasDashing = false;
+        private bool wasFocusing = false;
+        private bool wasOnGround = true;
+        private float lastGroundTime = 0f;
 
-        // Known combo patterns (can be extended)
-        private readonly Dictionary<string, string> comboPatterns = new Dictionary<string, string>
-        {
-            { "Jump,Attack", "Jump Attack" },
-            { "Dash,Attack", "Dash Strike" },
-            { "Jump,Dash", "Air Dash" },
-            { "Attack,Attack,Attack", "Triple Strike" },
-            { "Down,Attack", "Down Strike" },
-            { "Up,Attack", "Up Strike" }
-        };
+        // Track analog stick states (single-shot)
+        private bool wasAnalogLeft = false;
+        private bool wasAnalogRight = false;
+        private bool wasAnalogUp = false;
+        private bool wasAnalogDown = false;
+        private const float ANALOG_THRESHOLD = 0.5f;
+
+        // Track D-Pad states (single-shot)
+        private bool wasDPadLeft = false;
+        private bool wasDPadRight = false;
+        private bool wasDPadUp = false;
+        private bool wasDPadDown = false;
 
         void Awake()
         {
             instance = this;
+            maxActions = InputTimelinePlugin.Instance.MaxRecentActions.Value;
+            InputTimelinePlugin.ModLogger?.LogInfo($"InputRecorder Awake - maxActions={maxActions}, instance set={instance != null}");
         }
 
         void Update()
@@ -44,189 +50,286 @@ namespace HKSS.InputTimeline
             if (HeroController.instance == null)
                 return;
 
-            // Track inputs using cState and direct input
             var hero = HeroController.instance;
+            float currentTime = Time.time;
 
-            // Use cState for tracking actual actions
-            TrackInput("Jump", hero.cState.jumping);
-            TrackInput("Attack", hero.cState.attacking);
-            TrackInput("Dash", hero.cState.dashing);
-            TrackInput("Focus", hero.cState.focusing);
+            // Detect Jump action (transition from grounded to airborne)
+            if (!wasJumping && hero.cState.jumping)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "Jump",
+                    timestamp = currentTime,
+                    icon = "JUMP",
+                    iconChar = '^'
+                });
+            }
 
-            // Track directional inputs using Unity Input
+            // Detect Attack action (transition to attacking)
+            if (!wasAttacking && hero.cState.attacking)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "Attack",
+                    timestamp = currentTime,
+                    icon = "ATTK",
+                    iconChar = 'X'
+                });
+            }
+
+            // Detect Dash action (transition to dashing)
+            if (!wasDashing && hero.cState.dashing)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "Dash",
+                    timestamp = currentTime,
+                    icon = "DASH",
+                    iconChar = '>'
+                });
+            }
+
+            // Detect Focus/Heal action (transition to focusing)
+            if (!wasFocusing && hero.cState.focusing)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "Focus",
+                    timestamp = currentTime,
+                    icon = "HEAL",
+                    iconChar = '+'
+                });
+            }
+
+            // Detect Landing (transition from airborne to grounded)
+            if (!wasOnGround && hero.cState.onGround)
+            {
+                float airTime = currentTime - lastGroundTime;
+                if (airTime > 0.1f) // Only track significant air time
+                {
+                    AddAction(new PlayerAction
+                    {
+                        actionName = "Land",
+                        timestamp = currentTime,
+                        icon = "LAND",
+                        iconChar = 'v',
+                        extraInfo = $"{airTime:F1}s"
+                    });
+                }
+            }
+
+            // Detect Analog Stick movements (single-shot)
             float horizontal = Input.GetAxis("Horizontal");
             float vertical = Input.GetAxis("Vertical");
 
-            if (horizontal < -0.5f)
-                TrackInput("Left", true);
-            else if (horizontal > 0.5f)
-                TrackInput("Right", true);
-            else
+            // Analog Left
+            bool analogLeft = horizontal < -ANALOG_THRESHOLD;
+            if (analogLeft && !wasAnalogLeft)
             {
-                TrackInput("Left", false);
-                TrackInput("Right", false);
-            }
-
-            if (vertical < -0.5f)
-                TrackInput("Down", true);
-            else if (vertical > 0.5f)
-                TrackInput("Up", true);
-            else
-            {
-                TrackInput("Down", false);
-                TrackInput("Up", false);
-            }
-
-            // Clean old events
-            float currentTime = Time.time;
-            float timeWindow = InputTimelinePlugin.Instance.TimeWindow.Value;
-            inputHistory.RemoveAll(e => currentTime - e.timestamp > timeWindow);
-            detectedCombos.RemoveAll(c => currentTime - c.timestamp > timeWindow);
-
-            // Check for combo timeout
-            if (currentComboBuffer.Count > 0 && currentTime - lastComboInputTime > comboWindowTime)
-            {
-                currentComboBuffer.Clear();
-            }
-        }
-
-        private void TrackInput(string inputName, bool isPressed)
-        {
-            bool wasPressed = buttonPressStartTimes.ContainsKey(inputName);
-
-            if (isPressed && !wasPressed)
-            {
-                // Button just pressed
-                float currentTime = Time.time;
-                buttonPressStartTimes[inputName] = currentTime;
-
-                var inputEvent = new InputEvent
+                AddAction(new PlayerAction
                 {
-                    inputName = inputName,
+                    actionName = "Analog Left",
                     timestamp = currentTime,
-                    duration = 0f,
-                    isHold = false
-                };
-
-                inputHistory.Add(inputEvent);
-
-                // Add to combo buffer if enabled
-                if (InputTimelinePlugin.Instance.ShowCombos.Value)
-                {
-                    if (currentTime - lastComboInputTime <= comboWindowTime || currentComboBuffer.Count == 0)
-                    {
-                        currentComboBuffer.Add(inputName);
-                        lastComboInputTime = currentTime;
-                        CheckForCombos(currentTime);
-                    }
-                    else
-                    {
-                        currentComboBuffer.Clear();
-                        currentComboBuffer.Add(inputName);
-                        lastComboInputTime = currentTime;
-                    }
-                }
+                    icon = "L<",
+                    iconChar = '<'
+                });
             }
-            else if (!isPressed && wasPressed)
+            wasAnalogLeft = analogLeft;
+
+            // Analog Right
+            bool analogRight = horizontal > ANALOG_THRESHOLD;
+            if (analogRight && !wasAnalogRight)
             {
-                // Button just released
-                float pressStartTime = buttonPressStartTimes[inputName];
-                float duration = Time.time - pressStartTime;
-
-                // Update the event with duration
-                var inputEvent = inputHistory.LastOrDefault(e => e.inputName == inputName && e.timestamp == pressStartTime);
-                if (inputEvent != null)
+                AddAction(new PlayerAction
                 {
-                    inputEvent.duration = duration;
-                    inputEvent.isHold = duration >= InputTimelinePlugin.Instance.HoldThreshold.Value;
-                }
-
-                buttonPressStartTimes.Remove(inputName);
+                    actionName = "Analog Right",
+                    timestamp = currentTime,
+                    icon = "L>",
+                    iconChar = '>'
+                });
             }
-        }
+            wasAnalogRight = analogRight;
 
-        private void CheckForCombos(float timestamp)
-        {
-            if (currentComboBuffer.Count < 2)
-                return;
-
-            // Check if current buffer matches any combo pattern
-            string bufferSequence = string.Join(",", currentComboBuffer);
-
-            foreach (var pattern in comboPatterns)
+            // Analog Up
+            bool analogUp = vertical > ANALOG_THRESHOLD;
+            if (analogUp && !wasAnalogUp)
             {
-                if (bufferSequence.EndsWith(pattern.Key))
+                AddAction(new PlayerAction
                 {
-                    var combo = new ComboSequence
-                    {
-                        comboName = pattern.Value,
-                        inputs = pattern.Key.Split(',').ToList(),
-                        timestamp = timestamp
-                    };
+                    actionName = "Analog Up",
+                    timestamp = currentTime,
+                    icon = "L^",
+                    iconChar = '^'
+                });
+            }
+            wasAnalogUp = analogUp;
 
-                    detectedCombos.Add(combo);
+            // Analog Down
+            bool analogDown = vertical < -ANALOG_THRESHOLD;
+            if (analogDown && !wasAnalogDown)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "Analog Down",
+                    timestamp = currentTime,
+                    icon = "Lv",
+                    iconChar = 'v'
+                });
+            }
+            wasAnalogDown = analogDown;
 
-                    // Log combo detection
-                    InputTimelinePlugin.ModLogger?.LogDebug($"Combo detected: {pattern.Value}");
-                    break;
-                }
+            // Detect D-Pad inputs (these are typically separate from analog)
+            // Unity maps D-Pad to different input axes or buttons depending on the controller
+            float dpadH = 0f;
+            float dpadV = 0f;
+            try
+            {
+                dpadH = Input.GetAxis("DPadX");
+                dpadV = Input.GetAxis("DPadY");
+            }
+            catch { /* D-Pad axes might not exist */ }
+
+            // D-Pad Left
+            bool dpadLeft = dpadH < -0.5f || Input.GetKeyDown(KeyCode.LeftArrow);
+            if (dpadLeft && !wasDPadLeft)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "D-Pad Left",
+                    timestamp = currentTime,
+                    icon = "D<",
+                    iconChar = '<'
+                });
+            }
+            wasDPadLeft = dpadLeft;
+
+            // D-Pad Right
+            bool dpadRight = dpadH > 0.5f || Input.GetKeyDown(KeyCode.RightArrow);
+            if (dpadRight && !wasDPadRight)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "D-Pad Right",
+                    timestamp = currentTime,
+                    icon = "D>",
+                    iconChar = '>'
+                });
+            }
+            wasDPadRight = dpadRight;
+
+            // D-Pad Up
+            bool dpadUp = dpadV > 0.5f || Input.GetKeyDown(KeyCode.UpArrow);
+            if (dpadUp && !wasDPadUp)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "D-Pad Up",
+                    timestamp = currentTime,
+                    icon = "D^",
+                    iconChar = '^'
+                });
+            }
+            wasDPadUp = dpadUp;
+
+            // D-Pad Down
+            bool dpadDown = dpadV < -0.5f || Input.GetKeyDown(KeyCode.DownArrow);
+            if (dpadDown && !wasDPadDown)
+            {
+                AddAction(new PlayerAction
+                {
+                    actionName = "D-Pad Down",
+                    timestamp = currentTime,
+                    icon = "Dv",
+                    iconChar = 'v'
+                });
+            }
+            wasDPadDown = dpadDown;
+
+            // Update previous states
+            wasJumping = hero.cState.jumping;
+            wasAttacking = hero.cState.attacking;
+            wasDashing = hero.cState.dashing;
+            wasFocusing = hero.cState.focusing;
+
+            if (hero.cState.onGround)
+            {
+                lastGroundTime = currentTime;
+            }
+            wasOnGround = hero.cState.onGround;
+
+            // Remove old actions beyond display time
+            float displayTime = InputTimelinePlugin.Instance.TimeWindow.Value;
+            while (recentActions.Count > 0 && currentTime - recentActions.Peek().timestamp > displayTime)
+            {
+                recentActions.Dequeue();
             }
         }
 
-        public static List<InputEvent> GetInputHistory()
+        internal void AddAction(PlayerAction action)
         {
-            return instance?.inputHistory ?? new List<InputEvent>();
+            // Add to queue
+            recentActions.Enqueue(action);
+
+            // Keep only the configured max number of actions
+            while (recentActions.Count > maxActions)
+            {
+                recentActions.Dequeue();
+            }
+
+            // Log action with Info level so we can see it
+            InputTimelinePlugin.ModLogger?.LogInfo($"[ACTION] {action.actionName} at {action.timestamp:F2} - Queue size: {recentActions.Count}");
         }
 
-        public static List<ComboSequence> GetDetectedCombos()
+        public static List<PlayerAction> GetRecentActions()
         {
-            return instance?.detectedCombos ?? new List<ComboSequence>();
-        }
-
-        public static Dictionary<string, float> GetCurrentlyHeldButtons()
-        {
-            return instance?.buttonPressStartTimes ?? new Dictionary<string, float>();
+            return instance?.recentActions.ToList() ?? new List<PlayerAction>();
         }
     }
 
-    public class InputEvent
+    public class PlayerAction
     {
-        public string inputName;
+        public string actionName;
         public float timestamp;
-        public float duration;
-        public bool isHold;
+        public string icon;
+        public char iconChar; // Single character representation
+        public string extraInfo; // Optional extra info like air time
     }
 
-    public class ComboSequence
-    {
-        public string comboName;
-        public List<string> inputs;
-        public float timestamp;
-    }
-
-    // Harmony patches to detect special inputs
+    // Harmony patches to detect special actions - temporarily disabled to test base functionality
+    /*
     [HarmonyPatch(typeof(HeroController))]
     public class HeroControllerPatches
     {
-        [HarmonyPatch("DoAttack")]
+        [HarmonyPatch("TakeDamage")]
         [HarmonyPostfix]
-        public static void OnAttack()
+        public static void OnTakeDamage(HeroController __instance, int damageAmount)
         {
-            // Attack action triggered
+            if (InputRecorder.instance != null)
+            {
+                InputRecorder.instance.AddAction(new PlayerAction
+                {
+                    actionName = "Hit",
+                    timestamp = Time.time,
+                    icon = "💔",
+                    extraInfo = $"-{damageAmount}"
+                });
+            }
         }
 
-        [HarmonyPatch("HeroDash")]
+        [HarmonyPatch("Die")]
         [HarmonyPostfix]
-        public static void OnDash()
+        public static void OnDeath()
         {
-            // Dash action triggered
-        }
-
-        [HarmonyPatch("DoJump")]
-        [HarmonyPostfix]
-        public static void OnJump()
-        {
-            // Jump action triggered
+            if (InputRecorder.instance != null)
+            {
+                InputRecorder.instance.AddAction(new PlayerAction
+                {
+                    actionName = "Death",
+                    timestamp = Time.time,
+                    icon = "☠"
+                });
+            }
         }
     }
+    */
 }

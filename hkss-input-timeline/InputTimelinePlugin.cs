@@ -22,20 +22,14 @@ namespace HKSS.InputTimeline
 
         // Configuration
         public ConfigEntry<bool> Enabled { get; private set; }
-        public ConfigEntry<float> TimelineWidth { get; private set; }
-        public ConfigEntry<float> TimelineHeight { get; private set; }
+        public ConfigEntry<int> MaxRecentActions { get; private set; }
         public ConfigEntry<TimelinePosition> Position { get; private set; }
         public ConfigEntry<float> TimeWindow { get; private set; }
-        public ConfigEntry<bool> ShowCombos { get; private set; }
-        public ConfigEntry<float> ButtonSpacing { get; private set; }
         public ConfigEntry<float> Opacity { get; private set; }
-        public ConfigEntry<bool> ShowButtonLabels { get; private set; }
         public ConfigEntry<bool> ShowTimestamps { get; private set; }
-        public ConfigEntry<bool> HighlightHolds { get; private set; }
-        public ConfigEntry<float> HoldThreshold { get; private set; }
-        public ConfigEntry<Color> ButtonPressColor { get; private set; }
-        public ConfigEntry<Color> ButtonHoldColor { get; private set; }
-        public ConfigEntry<Color> ComboColor { get; private set; }
+        public ConfigEntry<bool> ShowBackground { get; private set; }
+        public ConfigEntry<Color> ActionBoxColor { get; private set; }
+        public ConfigEntry<Color> HighlightColor { get; private set; }
         public ConfigEntry<Color> BackgroundColor { get; private set; }
 
         private Harmony harmony;
@@ -52,14 +46,19 @@ namespace HKSS.InputTimeline
             harmony.PatchAll();
 
             Logger.LogInfo($"{PluginInfo.PLUGIN_NAME} v{PluginInfo.PLUGIN_VERSION} loaded!");
+
+            // Create the timeline GameObject immediately
+            Logger.LogInfo("Creating InputTimeline GameObject...");
+            timelineObject = new GameObject("InputTimeline");
+            var recorder = timelineObject.AddComponent<InputRecorder>();
+            var renderer = timelineObject.AddComponent<TimelineRenderer>();
+            DontDestroyOnLoad(timelineObject);
+            Logger.LogInfo($"InputTimeline GameObject created with recorder={recorder != null} and renderer={renderer != null}");
         }
 
         void Start()
         {
-            timelineObject = new GameObject("InputTimeline");
-            timelineObject.AddComponent<InputRecorder>();
-            timelineObject.AddComponent<TimelineRenderer>();
-            DontDestroyOnLoad(timelineObject);
+            // No longer needed here
         }
 
         void OnDestroy()
@@ -74,56 +73,35 @@ namespace HKSS.InputTimeline
             Enabled = Config.Bind("General", "Enabled", true,
                 "Enable the input timeline display");
 
-            TimelineWidth = Config.Bind("Display", "TimelineWidth", 800f,
-                new ConfigDescription("Width of the timeline in pixels",
-                    new AcceptableValueRange<float>(200f, 1920f)));
-
-            TimelineHeight = Config.Bind("Display", "TimelineHeight", 60f,
-                new ConfigDescription("Height of the timeline in pixels",
-                    new AcceptableValueRange<float>(30f, 200f)));
+            MaxRecentActions = Config.Bind("Display", "MaxRecentActions", 5,
+                new ConfigDescription("Maximum number of recent actions to display (3-10)",
+                    new AcceptableValueRange<int>(3, 10)));
 
             Position = Config.Bind("Display", "Position", TimelinePosition.Bottom,
                 "Position of the timeline on screen");
 
             TimeWindow = Config.Bind("Display", "TimeWindow", 5f,
-                new ConfigDescription("Time window to display in seconds",
-                    new AcceptableValueRange<float>(1f, 20f)));
+                new ConfigDescription("How long actions remain visible in seconds",
+                    new AcceptableValueRange<float>(2f, 10f)));
 
-            ShowCombos = Config.Bind("Display", "ShowCombos", true,
-                "Highlight combo sequences");
-
-            ButtonSpacing = Config.Bind("Display", "ButtonSpacing", 5f,
-                new ConfigDescription("Spacing between button indicators",
-                    new AcceptableValueRange<float>(0f, 20f)));
-
-            Opacity = Config.Bind("Display", "Opacity", 0.8f,
+            Opacity = Config.Bind("Display", "Opacity", 0.9f,
                 new ConfigDescription("Opacity of the timeline",
                     new AcceptableValueRange<float>(0.1f, 1f)));
 
-            ShowButtonLabels = Config.Bind("Display", "ShowButtonLabels", true,
-                "Show button names on the timeline");
+            ShowTimestamps = Config.Bind("Display", "ShowTimestamps", true,
+                "Show time since action occurred");
 
-            ShowTimestamps = Config.Bind("Display", "ShowTimestamps", false,
-                "Show timing information");
+            ShowBackground = Config.Bind("Display", "ShowBackground", true,
+                "Show background strip behind actions");
 
-            HighlightHolds = Config.Bind("Display", "HighlightHolds", true,
-                "Highlight held buttons differently");
+            ActionBoxColor = Config.Bind("Colors", "ActionBoxColor", new Color(0.2f, 0.3f, 0.4f, 1f),
+                "Color for action boxes");
 
-            HoldThreshold = Config.Bind("Display", "HoldThreshold", 0.3f,
-                new ConfigDescription("Time in seconds before a press becomes a hold",
-                    new AcceptableValueRange<float>(0.1f, 2f)));
-
-            ButtonPressColor = Config.Bind("Colors", "ButtonPressColor", new Color(0.4f, 0.8f, 1f, 1f),
-                "Color for regular button presses");
-
-            ButtonHoldColor = Config.Bind("Colors", "ButtonHoldColor", new Color(1f, 0.8f, 0.4f, 1f),
-                "Color for held buttons");
-
-            ComboColor = Config.Bind("Colors", "ComboColor", new Color(1f, 0.4f, 0.4f, 1f),
-                "Color for combo indicators");
+            HighlightColor = Config.Bind("Colors", "HighlightColor", new Color(0.4f, 0.6f, 0.8f, 1f),
+                "Color for most recent action");
 
             BackgroundColor = Config.Bind("Colors", "BackgroundColor", new Color(0f, 0f, 0f, 0.5f),
-                "Background color of the timeline");
+                "Background color of the timeline strip");
         }
     }
 

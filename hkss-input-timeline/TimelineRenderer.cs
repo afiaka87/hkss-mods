@@ -8,38 +8,25 @@ namespace HKSS.InputTimeline
     public class TimelineRenderer : MonoBehaviour
     {
         private Texture2D backgroundTexture;
-        private Texture2D buttonTexture;
-        private Texture2D holdTexture;
-        private Texture2D comboTexture;
-        private Texture2D markerTexture;
-        private GUIStyle labelStyle;
-        private GUIStyle timestampStyle;
-
-        private readonly Dictionary<string, string> buttonSymbols = new Dictionary<string, string>
-        {
-            { "Jump", "↑" },
-            { "Attack", "⚔" },
-            { "Dash", "→" },
-            { "Focus", "◉" },
-            { "Left", "←" },
-            { "Right", "→" },
-            { "Up", "↑" },
-            { "Down", "↓" }
-        };
+        private Texture2D actionBoxTexture;
+        private Texture2D fadeOverlayTexture;
+        private GUIStyle actionStyle;
+        private GUIStyle iconStyle;
+        private GUIStyle timeStyle;
 
         void Awake()
         {
+            InputTimelinePlugin.ModLogger?.LogInfo("TimelineRenderer Awake - creating textures and styles");
             CreateTextures();
             CreateStyles();
+            InputTimelinePlugin.ModLogger?.LogInfo("TimelineRenderer initialized");
         }
 
         void OnDestroy()
         {
             if (backgroundTexture != null) Destroy(backgroundTexture);
-            if (buttonTexture != null) Destroy(buttonTexture);
-            if (holdTexture != null) Destroy(holdTexture);
-            if (comboTexture != null) Destroy(comboTexture);
-            if (markerTexture != null) Destroy(markerTexture);
+            if (actionBoxTexture != null) Destroy(actionBoxTexture);
+            if (fadeOverlayTexture != null) Destroy(fadeOverlayTexture);
         }
 
         private void CreateTextures()
@@ -49,20 +36,30 @@ namespace HKSS.InputTimeline
             backgroundTexture.SetPixel(0, 0, Color.white);
             backgroundTexture.Apply();
 
-            // Create button texture (rounded rectangle)
-            buttonTexture = CreateRoundedRectTexture(40, 30, 5);
+            // Create action box texture (rounded rectangle)
+            actionBoxTexture = CreateRoundedRectTexture(120, 40, 8);
 
-            // Create hold texture (wider rounded rectangle)
-            holdTexture = CreateRoundedRectTexture(80, 30, 5);
+            // Create fade overlay for older actions
+            fadeOverlayTexture = CreateGradientTexture(120, 40);
+        }
 
-            // Create combo texture
-            comboTexture = CreateRoundedRectTexture(100, 35, 8);
+        private Texture2D CreateGradientTexture(int width, int height)
+        {
+            var texture = new Texture2D(width, height);
+            var pixels = new Color[width * height];
 
-            // Create marker texture (vertical line for current time)
-            markerTexture = new Texture2D(2, 1);
-            markerTexture.SetPixel(0, 0, Color.white);
-            markerTexture.SetPixel(1, 0, Color.white);
-            markerTexture.Apply();
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    float alpha = 1f - (x / (float)width) * 0.5f; // Fade from left to right
+                    pixels[y * width + x] = new Color(1, 1, 1, alpha);
+                }
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply();
+            return texture;
         }
 
         private Texture2D CreateRoundedRectTexture(int width, int height, int radius)
@@ -105,19 +102,30 @@ namespace HKSS.InputTimeline
 
         private void CreateStyles()
         {
-            labelStyle = new GUIStyle
+            actionStyle = new GUIStyle
             {
-                fontSize = 14,
+                fontSize = 16,
                 fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = Color.white }
+                alignment = TextAnchor.MiddleLeft,
+                normal = { textColor = Color.white },
+                padding = new RectOffset(10, 0, 0, 0)
             };
 
-            timestampStyle = new GUIStyle
+            iconStyle = new GUIStyle
+            {
+                fontSize = 16,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = Color.white },
+                fontStyle = FontStyle.Bold,
+                richText = true
+            };
+
+            timeStyle = new GUIStyle
             {
                 fontSize = 10,
-                alignment = TextAnchor.MiddleLeft,
-                normal = { textColor = new Color(0.8f, 0.8f, 0.8f, 1f) }
+                alignment = TextAnchor.MiddleRight,
+                normal = { textColor = new Color(0.7f, 0.7f, 0.7f, 1f) },
+                padding = new RectOffset(0, 5, 0, 0)
             };
         }
 
@@ -126,198 +134,141 @@ namespace HKSS.InputTimeline
             if (!InputTimelinePlugin.Instance.Enabled.Value)
                 return;
 
-            DrawTimeline();
+            DrawRecentActions();
         }
 
-        private void DrawTimeline()
+        private void DrawRecentActions()
         {
             var config = InputTimelinePlugin.Instance;
-            float width = config.TimelineWidth.Value;
-            float height = config.TimelineHeight.Value;
             float opacity = config.Opacity.Value;
 
-            // Calculate timeline position
-            float x = (Screen.width - width) / 2f;
+            // Get recent actions
+            var recentActions = InputRecorder.GetRecentActions();
+
+            // Always show a debug box to verify rendering is working
+            if (recentActions.Count == 0)
+            {
+                // Draw a stylized "waiting" indicator
+                GUI.color = new Color(0.3f, 0.3f, 0.3f, 0.6f);
+                GUI.Box(new Rect(20, 80, 180, 25), "[ INPUT TIMELINE - READY ]");
+                GUI.color = Color.white;
+                return;
+            }
+
+            float currentTime = Time.time;
+
+            // Display settings for ASCII boxes
+            float boxWidth = 55f;
+            float boxHeight = 35f;
+            float spacing = 8f;
+            float totalWidth = (boxWidth + spacing) * recentActions.Count - spacing;
+
+            // Calculate position
+            float x = 20f; // Left side of screen
             float y = 0f;
 
             switch (config.Position.Value)
             {
                 case TimelinePosition.Top:
-                    y = 50f;
+                    y = 80f;
                     break;
                 case TimelinePosition.Bottom:
-                    y = Screen.height - height - 50f;
+                    y = Screen.height - boxHeight - 80f;
                     break;
                 case TimelinePosition.Center:
-                    y = (Screen.height - height) / 2f;
+                    y = (Screen.height - boxHeight) / 2f;
                     break;
             }
 
-            var timelineRect = new Rect(x, y, width, height);
-
-            // Draw background
-            var bgColor = config.BackgroundColor.Value;
-            bgColor.a *= opacity;
-            GUI.color = bgColor;
-            GUI.DrawTexture(timelineRect, backgroundTexture);
-
-            // Get current time and time window
-            float currentTime = Time.time;
-            float timeWindow = config.TimeWindow.Value;
-            float startTime = currentTime - timeWindow;
-
-            // Draw time markers
-            if (config.ShowTimestamps.Value)
+            // Draw sleek background strip
+            if (config.ShowBackground.Value)
             {
-                DrawTimeMarkers(timelineRect, startTime, currentTime);
+                var bgRect = new Rect(x - 10, y - 8, totalWidth + 20, boxHeight + 16);
+                var bgColor = new Color(0f, 0f, 0f, opacity * 0.5f);
+                GUI.color = bgColor;
+                GUI.DrawTexture(bgRect, backgroundTexture);
+
+                // Draw border frame
+                var borderColor = new Color(0.5f, 0.5f, 0.5f, opacity * 0.3f);
+                GUI.color = borderColor;
+                GUI.Box(bgRect, "");
             }
 
-            // Draw current time indicator
-            float markerX = x + width - 2;
-            GUI.color = new Color(1f, 1f, 1f, opacity * 0.8f);
-            GUI.DrawTexture(new Rect(markerX, y, 2, height), markerTexture);
-
-            // Draw input events
-            var inputHistory = InputRecorder.GetInputHistory();
-            var heldButtons = InputRecorder.GetCurrentlyHeldButtons();
-
-            foreach (var inputEvent in inputHistory)
+            // Draw each action
+            int index = 0;
+            foreach (var action in recentActions)
             {
-                DrawInputEvent(timelineRect, inputEvent, startTime, currentTime, opacity);
-            }
+                float actionX = x + index * (boxWidth + spacing);
+                var actionRect = new Rect(actionX, y, boxWidth, boxHeight);
 
-            // Draw currently held buttons
-            foreach (var held in heldButtons)
-            {
-                DrawHeldButton(timelineRect, held.Key, held.Value, currentTime, opacity);
-            }
-
-            // Draw detected combos
-            if (config.ShowCombos.Value)
-            {
-                var combos = InputRecorder.GetDetectedCombos();
-                foreach (var combo in combos)
-                {
-                    DrawCombo(timelineRect, combo, startTime, currentTime, opacity);
-                }
+                DrawAction(actionRect, action, currentTime, opacity, index == recentActions.Count - 1);
+                index++;
             }
 
             GUI.color = Color.white;
         }
 
-        private void DrawTimeMarkers(Rect timelineRect, float startTime, float endTime)
+        private void DrawAction(Rect rect, PlayerAction action, float currentTime, float opacity, bool isMostRecent)
         {
-            float timeRange = endTime - startTime;
-            int markerCount = Mathf.Min(10, (int)timeRange + 1);
+            float timeSince = currentTime - action.timestamp;
+            float fadeAmount = Mathf.Clamp01(1f - (timeSince / InputTimelinePlugin.Instance.TimeWindow.Value));
 
-            for (int i = 0; i <= markerCount; i++)
+            // Draw stylized ASCII box
+            if (isMostRecent)
             {
-                float markerTime = i * (timeRange / markerCount);
-                float xPos = timelineRect.x + (markerTime / timeRange) * timelineRect.width;
+                // Highlight most recent with brighter border
+                var borderColor = new Color(0.8f, 0.8f, 0.8f, fadeAmount * opacity);
+                GUI.color = borderColor;
+                GUI.Box(rect, "");
 
-                // Draw tick mark
-                GUI.color = new Color(0.5f, 0.5f, 0.5f, 0.5f);
-                GUI.DrawTexture(new Rect(xPos - 1, timelineRect.y + timelineRect.height - 10, 2, 10), markerTexture);
-
-                // Draw time label
-                string timeLabel = $"{markerTime:F1}s";
-                var labelRect = new Rect(xPos - 20, timelineRect.y + timelineRect.height - 25, 40, 15);
-                GUI.Label(labelRect, timeLabel, timestampStyle);
+                // Draw inner fill
+                var fillRect = new Rect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
+                var fillColor = new Color(0.2f, 0.3f, 0.4f, fadeAmount * opacity * 0.8f);
+                GUI.color = fillColor;
+                GUI.DrawTexture(fillRect, backgroundTexture);
             }
-        }
-
-        private void DrawInputEvent(Rect timelineRect, InputEvent inputEvent, float startTime, float endTime, float opacity)
-        {
-            float timeRange = endTime - startTime;
-            float relativeTime = inputEvent.timestamp - startTime;
-
-            if (relativeTime < 0)
-                return;
-
-            float xPos = timelineRect.x + (relativeTime / timeRange) * timelineRect.width;
-
-            // Determine button width based on hold duration
-            float buttonWidth = 40f;
-            if (inputEvent.isHold && InputTimelinePlugin.Instance.HighlightHolds.Value)
+            else
             {
-                buttonWidth = Mathf.Min(80f, 40f + inputEvent.duration * 40f);
+                // Normal action box
+                var borderColor = new Color(0.5f, 0.5f, 0.5f, fadeAmount * opacity * 0.7f);
+                GUI.color = borderColor;
+                GUI.Box(rect, "");
+
+                // Draw inner fill
+                var fillRect = new Rect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
+                var fillColor = new Color(0.1f, 0.1f, 0.1f, fadeAmount * opacity * 0.5f);
+                GUI.color = fillColor;
+                GUI.DrawTexture(fillRect, backgroundTexture);
             }
 
-            // Draw button
-            var buttonRect = new Rect(xPos - buttonWidth / 2f, timelineRect.y + (timelineRect.height - 30) / 2f, buttonWidth, 30);
+            // Draw the action text
+            var textRect = new Rect(rect.x, rect.y + 2, rect.width, rect.height - 4);
+            actionStyle.fontSize = isMostRecent ? 14 : 12;
+            actionStyle.alignment = TextAnchor.UpperCenter;
 
-            Color buttonColor = inputEvent.isHold
-                ? InputTimelinePlugin.Instance.ButtonHoldColor.Value
-                : InputTimelinePlugin.Instance.ButtonPressColor.Value;
-            buttonColor.a *= opacity;
-            GUI.color = buttonColor;
+            GUI.color = new Color(1f, 1f, 1f, fadeAmount * opacity);
+            GUI.Label(textRect, action.icon, actionStyle);
 
-            GUI.DrawTexture(buttonRect, inputEvent.isHold ? holdTexture : buttonTexture);
+            // Draw the single character icon below
+            var charRect = new Rect(rect.x, rect.y + rect.height * 0.5f, rect.width, rect.height * 0.5f);
+            iconStyle.fontSize = isMostRecent ? 18 : 16;
+            iconStyle.alignment = TextAnchor.MiddleCenter;
 
-            // Draw button label
-            if (InputTimelinePlugin.Instance.ShowButtonLabels.Value)
+            var iconColor = isMostRecent
+                ? new Color(0.9f, 0.95f, 1f, fadeAmount * opacity)
+                : new Color(0.7f, 0.8f, 0.9f, fadeAmount * opacity * 0.9f);
+            GUI.color = iconColor;
+            GUI.Label(charRect, "[" + action.iconChar + "]", iconStyle);
+
+            // Draw extra info if present (like air time)
+            if (!string.IsNullOrEmpty(action.extraInfo))
             {
-                string label = buttonSymbols.ContainsKey(inputEvent.inputName)
-                    ? buttonSymbols[inputEvent.inputName]
-                    : inputEvent.inputName.Substring(0, Math.Min(3, inputEvent.inputName.Length));
-
-                GUI.color = Color.white;
-                GUI.Label(buttonRect, label, labelStyle);
+                var infoRect = new Rect(rect.x, rect.y + rect.height - 10, rect.width, 10);
+                timeStyle.fontSize = 9;
+                timeStyle.alignment = TextAnchor.LowerCenter;
+                GUI.color = new Color(0.6f, 0.7f, 0.8f, fadeAmount * opacity * 0.7f);
+                GUI.Label(infoRect, action.extraInfo, timeStyle);
             }
-        }
-
-        private void DrawHeldButton(Rect timelineRect, string buttonName, float startTime, float currentTime, float opacity)
-        {
-            float holdDuration = currentTime - startTime;
-            float timeWindow = InputTimelinePlugin.Instance.TimeWindow.Value;
-
-            // Calculate position for held button (extends from start to current edge)
-            float relativeStartTime = Math.Max(0, startTime - (currentTime - timeWindow));
-            float xStart = timelineRect.x + (relativeStartTime / timeWindow) * timelineRect.width;
-            float xEnd = timelineRect.x + timelineRect.width - 2; // Current time position
-
-            var holdRect = new Rect(xStart, timelineRect.y + (timelineRect.height - 30) / 2f, xEnd - xStart, 30);
-
-            Color holdColor = InputTimelinePlugin.Instance.ButtonHoldColor.Value;
-            holdColor.a *= opacity * 0.6f; // Slightly transparent for ongoing holds
-            GUI.color = holdColor;
-            GUI.DrawTexture(holdRect, backgroundTexture);
-
-            // Draw label at the start
-            if (InputTimelinePlugin.Instance.ShowButtonLabels.Value && holdRect.width > 20)
-            {
-                string label = buttonSymbols.ContainsKey(buttonName)
-                    ? buttonSymbols[buttonName]
-                    : buttonName.Substring(0, Math.Min(3, buttonName.Length));
-
-                var labelRect = new Rect(xStart, holdRect.y, 40, holdRect.height);
-                GUI.color = Color.white;
-                GUI.Label(labelRect, label, labelStyle);
-            }
-        }
-
-        private void DrawCombo(Rect timelineRect, ComboSequence combo, float startTime, float endTime, float opacity)
-        {
-            float timeRange = endTime - startTime;
-            float relativeTime = combo.timestamp - startTime;
-
-            if (relativeTime < 0)
-                return;
-
-            float xPos = timelineRect.x + (relativeTime / timeRange) * timelineRect.width;
-
-            // Draw combo indicator above the timeline
-            var comboRect = new Rect(xPos - 50, timelineRect.y - 25, 100, 20);
-
-            Color comboColor = InputTimelinePlugin.Instance.ComboColor.Value;
-            comboColor.a *= opacity;
-            GUI.color = comboColor;
-            GUI.DrawTexture(comboRect, comboTexture);
-
-            // Draw combo name
-            GUI.color = Color.white;
-            var comboLabelStyle = new GUIStyle(labelStyle) { fontSize = 12 };
-            GUI.Label(comboRect, combo.comboName, comboLabelStyle);
         }
     }
 }
