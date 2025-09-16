@@ -13,24 +13,55 @@ namespace HKSS.DashCooldownRadial
         private float pulseTimer = 0f;
 
         private Texture2D radialTexture;
-        private Texture2D backgroundTexture;
+        private Texture2D[] radialSegments; // Pre-rendered segments for animation
         private bool texturesInitialized = false;
 
-        private const int TEXTURE_SIZE = 128;
+        // Cache references for performance
+        private SpriteRenderer cachedSpriteRenderer;
+        private Collider2D cachedCollider;
+        private Transform cachedTransform;
+
+        private const int TEXTURE_SIZE = 64; // Reduced for performance
         private const float PULSE_SPEED = 3f;
+        private const int SEGMENT_COUNT = 16; // Number of segments for smooth fill
 
         void Awake()
         {
             instance = this;
-            CreateTextures();
+            DashCooldownPlugin.ModLogger?.LogInfo("[RadialIndicator] Awake called - creating textures");
+            CreateRadialTextures();
+        }
+
+        void Start()
+        {
+            // Cache references when HeroController becomes available
+            StartCoroutine(CacheReferences());
+        }
+
+        System.Collections.IEnumerator CacheReferences()
+        {
+            while (HeroController.instance == null)
+                yield return new WaitForSeconds(0.1f);
+
+            cachedTransform = HeroController.instance.transform;
+            cachedSpriteRenderer = HeroController.instance.GetComponent<SpriteRenderer>();
+            cachedCollider = HeroController.instance.GetComponent<Collider2D>();
+
+            DashCooldownPlugin.ModLogger?.LogInfo($"[RadialIndicator] Cached references - SpriteRenderer: {cachedSpriteRenderer != null}, Collider: {cachedCollider != null}");
         }
 
         void OnDestroy()
         {
             if (radialTexture != null)
                 Destroy(radialTexture);
-            if (backgroundTexture != null)
-                Destroy(backgroundTexture);
+            if (radialSegments != null)
+            {
+                foreach (var segment in radialSegments)
+                {
+                    if (segment != null)
+                        Destroy(segment);
+                }
+            }
         }
 
         public static void UpdateCooldown(float percent, bool ready)
@@ -38,6 +69,10 @@ namespace HKSS.DashCooldownRadial
             if (instance != null)
             {
                 instance.SetCooldown(percent, ready);
+            }
+            else
+            {
+                DashCooldownPlugin.ModLogger?.LogWarning("[RadialIndicator] UpdateCooldown called but instance is null!");
             }
         }
 
@@ -49,6 +84,7 @@ namespace HKSS.DashCooldownRadial
             {
                 // Dash just became ready
                 hideTimer = DashCooldownPlugin.Instance.HideDelay.Value;
+                DashCooldownPlugin.ModLogger?.LogDebug($"[RadialIndicator] Dash ready! Starting hide timer: {hideTimer}s");
             }
 
             isDashReady = ready;
@@ -85,7 +121,8 @@ namespace HKSS.DashCooldownRadial
 
             if (!texturesInitialized)
             {
-                CreateTextures();
+                DashCooldownPlugin.ModLogger?.LogWarning("[RadialIndicator] Textures not initialized in OnGUI, recreating...");
+                CreateRadialTextures();
                 texturesInitialized = true;
             }
 
@@ -94,33 +131,56 @@ namespace HKSS.DashCooldownRadial
 
         private void DrawRadialIndicator()
         {
-            if (HeroController.instance == null)
+            if (HeroController.instance == null || cachedTransform == null)
                 return;
 
-            // Get player position on screen
-            Vector3 worldPos = HeroController.instance.transform.position;
-            Vector3 screenPos = Camera.main.WorldToScreenPoint(worldPos);
+            // Get the character's position and bounds
+            Vector3 worldPos = cachedTransform.position;
+            float spriteTopOffset = 0f;
+            float dynamicXOffset = 0f;
 
-            // Adjust position based on config
-            float yOffset = 0f;
-            var position = DashCooldownPlugin.Instance.Position.Value;
-            switch (position)
+            // First try collider bounds (more reliable for different poses)
+            if (cachedCollider != null)
             {
-                case RadialPosition.AboveCharacter:
-                    yOffset = -100;
-                    break;
-                case RadialPosition.BelowCharacter:
-                    yOffset = 100;
-                    break;
-                case RadialPosition.AroundCharacter:
-                default:
-                    yOffset = 0;
-                    break;
+                Bounds bounds = cachedCollider.bounds;
+                // Use the top-right corner of the collider
+                worldPos.x = bounds.center.x;
+                worldPos.y = bounds.max.y;
+                spriteTopOffset = bounds.size.y * 0.2f;
+                dynamicXOffset = bounds.size.x * 0.5f; // Offset based on character width
+            }
+            // Fall back to sprite renderer if no collider
+            else if (cachedSpriteRenderer != null && cachedSpriteRenderer.sprite != null)
+            {
+                Bounds bounds = cachedSpriteRenderer.bounds;
+                worldPos.x = bounds.center.x;
+                worldPos.y = bounds.max.y;
+                spriteTopOffset = bounds.size.y * 0.2f;
+                dynamicXOffset = bounds.size.x * 0.5f;
+            }
+            else
+            {
+                // Final fallback: estimate based on typical character dimensions
+                worldPos.y += 1.5f;
+                dynamicXOffset = 20f;
             }
 
+            Vector3 screenPos = Camera.main.WorldToScreenPoint(worldPos);
+
+            // Dynamic positioning that accounts for character bounds
+            float xOffset = 80f + dynamicXOffset; // Even farther to the right
+            float yOffset = -140f - spriteTopOffset; // Higher above character
+
+            // Check if character is facing left (sprite might be flipped)
+            if (cachedSpriteRenderer != null && cachedSpriteRenderer.flipX)
+            {
+                xOffset = -xOffset; // Mirror the position when facing left
+            }
+
+            screenPos.x += xOffset;
             screenPos.y = Screen.height - screenPos.y + yOffset; // Convert to GUI coordinates
 
-            float size = TEXTURE_SIZE * DashCooldownPlugin.Instance.RadialSize.Value;
+            float size = TEXTURE_SIZE * 0.7f; // Even smaller for less obstruction
             float halfSize = size / 2f;
 
             Rect radialRect = new Rect(
@@ -140,47 +200,83 @@ namespace HKSS.DashCooldownRadial
                 opacity *= 0.7f + 0.3f * Mathf.Sin(pulseTimer);
             }
 
-            // Draw background circle
-            GUI.color = new Color(0.2f, 0.2f, 0.2f, opacity * 0.5f);
-            GUI.DrawTexture(radialRect, backgroundTexture);
+            // Draw background circle (darker, but more visible)
+            GUI.color = new Color(0.15f, 0.15f, 0.15f, opacity * 0.75f);
+            GUI.DrawTexture(radialRect, radialTexture);
 
-            // Draw radial fill
-            Color fillColor = isDashReady
-                ? DashCooldownPlugin.Instance.ReadyColor.Value
-                : DashCooldownPlugin.Instance.CooldownColor.Value;
-            fillColor.a = opacity;
-            GUI.color = fillColor;
-
-            // Create radial fill effect using rotation
-            Matrix4x4 matrixBackup = GUI.matrix;
-
-            float fillAngle = (1f - currentCooldownPercent) * 360f;
-            int segments = Mathf.CeilToInt(fillAngle / 10f);
-
-            for (int i = 0; i < segments; i++)
+            // Draw radial fill animation
+            if (!isDashReady && currentCooldownPercent > 0f)
             {
-                float angle = i * 10f;
-                if (angle > fillAngle)
-                    break;
-
-                GUIUtility.RotateAroundPivot(angle, new Vector2(radialRect.center.x, radialRect.center.y));
-                GUI.DrawTexture(radialRect, CreateSegmentTexture());
-                GUI.matrix = matrixBackup;
+                DrawRadialFill(radialRect, currentCooldownPercent, new Color(180f/255f, 61f/255f, 62f/255f, opacity));
+            }
+            else if (isDashReady)
+            {
+                // Full green circle when ready
+                GUI.color = new Color(120f/255f, 180f/255f, 120f/255f, opacity);
+                GUI.DrawTexture(radialRect, radialTexture);
             }
 
             GUI.color = originalColor;
         }
 
-        private void CreateTextures()
+        private void DrawRadialFill(Rect rect, float fillPercent, Color color)
         {
-            // Create circular background texture
-            backgroundTexture = new Texture2D(TEXTURE_SIZE, TEXTURE_SIZE, TextureFormat.ARGB32, false);
+            if (radialSegments == null || radialSegments.Length == 0)
+                return;
+
+            GUI.color = color;
+
+            // Calculate how many segments to draw based on fill percent
+            float fillAngle = (1f - fillPercent) * 360f;
+            int segmentsToRender = Mathf.CeilToInt(fillAngle / (360f / SEGMENT_COUNT));
+
+            Matrix4x4 matrixBackup = GUI.matrix;
+            Vector2 pivot = new Vector2(rect.center.x, rect.center.y);
+
+            // Draw segments in a circle, starting from top
+            for (int i = 0; i < segmentsToRender && i < SEGMENT_COUNT; i++)
+            {
+                float segmentAngle = i * (360f / SEGMENT_COUNT) - 90f; // Start from top
+
+                // Skip segments beyond the fill amount
+                if (segmentAngle - (-90f) > fillAngle)
+                    break;
+
+                GUI.matrix = matrixBackup;
+                GUIUtility.RotateAroundPivot(segmentAngle, pivot);
+                GUI.DrawTexture(rect, radialSegments[i % radialSegments.Length]);
+            }
+
+            GUI.matrix = matrixBackup;
+        }
+
+        private void CreateRadialTextures()
+        {
+            DashCooldownPlugin.ModLogger?.LogInfo($"[RadialIndicator] Creating textures (size: {TEXTURE_SIZE}x{TEXTURE_SIZE})");
+
+            // Create the background circle
+            radialTexture = CreateCircleTexture();
+
+            // Create segment textures for animation
+            radialSegments = new Texture2D[SEGMENT_COUNT];
+            for (int i = 0; i < SEGMENT_COUNT; i++)
+            {
+                radialSegments[i] = CreateSegmentTexture(i);
+            }
+
+            texturesInitialized = true;
+            DashCooldownPlugin.ModLogger?.LogInfo($"[RadialIndicator] Created {SEGMENT_COUNT} segment textures");
+        }
+
+        private Texture2D CreateCircleTexture()
+        {
+            var texture = new Texture2D(TEXTURE_SIZE, TEXTURE_SIZE, TextureFormat.ARGB32, false);
             Color[] pixels = new Color[TEXTURE_SIZE * TEXTURE_SIZE];
 
             int centerX = TEXTURE_SIZE / 2;
             int centerY = TEXTURE_SIZE / 2;
-            float radius = TEXTURE_SIZE / 2f - 2;
-            float innerRadius = radius - 10;
+            float radius = TEXTURE_SIZE / 2f - 1;
+            float innerRadius = radius - 6;
 
             for (int y = 0; y < TEXTURE_SIZE; y++)
             {
@@ -190,7 +286,13 @@ namespace HKSS.DashCooldownRadial
 
                     if (distance <= radius && distance >= innerRadius)
                     {
-                        pixels[y * TEXTURE_SIZE + x] = Color.white;
+                        float alpha = 1f;
+                        if (distance > radius - 1)
+                            alpha = radius - distance;
+                        else if (distance < innerRadius + 1)
+                            alpha = distance - innerRadius;
+
+                        pixels[y * TEXTURE_SIZE + x] = new Color(1f, 1f, 1f, alpha);
                     }
                     else
                     {
@@ -199,38 +301,50 @@ namespace HKSS.DashCooldownRadial
                 }
             }
 
-            backgroundTexture.SetPixels(pixels);
-            backgroundTexture.Apply();
-
-            // Create radial segment texture
-            radialTexture = CreateSegmentTexture();
+            texture.SetPixels(pixels);
+            texture.Apply();
+            texture.filterMode = FilterMode.Bilinear;
+            return texture;
         }
 
-        private Texture2D CreateSegmentTexture()
+        private Texture2D CreateSegmentTexture(int segmentIndex)
         {
-            Texture2D segmentTex = new Texture2D(TEXTURE_SIZE, TEXTURE_SIZE, TextureFormat.ARGB32, false);
+            var texture = new Texture2D(TEXTURE_SIZE, TEXTURE_SIZE, TextureFormat.ARGB32, false);
             Color[] pixels = new Color[TEXTURE_SIZE * TEXTURE_SIZE];
 
             int centerX = TEXTURE_SIZE / 2;
             int centerY = TEXTURE_SIZE / 2;
-            float radius = TEXTURE_SIZE / 2f - 2;
-            float innerRadius = radius - 10;
+            float radius = TEXTURE_SIZE / 2f - 1;
+            float innerRadius = radius - 6;
+
+            float segmentAngle = 360f / SEGMENT_COUNT;
+            float startAngle = 0; // Segment starts at top
+            float endAngle = segmentAngle;
 
             for (int y = 0; y < TEXTURE_SIZE; y++)
             {
                 for (int x = 0; x < TEXTURE_SIZE; x++)
                 {
-                    float distance = Vector2.Distance(new Vector2(x, y), new Vector2(centerX, centerY));
+                    float dx = x - centerX;
+                    float dy = y - centerY;
+                    float distance = Mathf.Sqrt(dx * dx + dy * dy);
 
                     if (distance <= radius && distance >= innerRadius)
                     {
-                        // Create a wedge shape for radial fill
-                        float angle = Mathf.Atan2(y - centerY, x - centerX) * Mathf.Rad2Deg;
+                        // Calculate angle from center (0 = top, going clockwise)
+                        float angle = Mathf.Atan2(dx, -dy) * Mathf.Rad2Deg;
                         if (angle < 0) angle += 360;
 
-                        if (angle >= 0 && angle <= 10) // 10 degree segment
+                        // Check if pixel is within this segment's angle range
+                        if (angle >= startAngle && angle <= endAngle)
                         {
-                            pixels[y * TEXTURE_SIZE + x] = Color.white;
+                            float alpha = 1f;
+                            if (distance > radius - 1)
+                                alpha = radius - distance;
+                            else if (distance < innerRadius + 1)
+                                alpha = distance - innerRadius;
+
+                            pixels[y * TEXTURE_SIZE + x] = new Color(1f, 1f, 1f, alpha);
                         }
                         else
                         {
@@ -244,9 +358,10 @@ namespace HKSS.DashCooldownRadial
                 }
             }
 
-            segmentTex.SetPixels(pixels);
-            segmentTex.Apply();
-            return segmentTex;
+            texture.SetPixels(pixels);
+            texture.Apply();
+            texture.filterMode = FilterMode.Bilinear;
+            return texture;
         }
     }
 }

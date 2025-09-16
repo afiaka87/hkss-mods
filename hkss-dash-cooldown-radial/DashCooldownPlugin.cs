@@ -38,18 +38,24 @@ namespace HKSS.DashCooldownRadial
             Instance = this;
             ModLogger = Logger;
 
+            Logger.LogInfo("[DashCooldownRadial] Initializing plugin...");
+
             InitializeConfig();
 
             if (!Enabled.Value)
             {
-                Logger.LogInfo("Dash Cooldown Radial is disabled in config");
+                Logger.LogInfo("[DashCooldownRadial] Plugin is disabled in config");
                 return;
             }
 
+            Logger.LogInfo("[DashCooldownRadial] Creating GameObject and components...");
+            CreateRadialIndicator();
+
+            Logger.LogInfo("[DashCooldownRadial] Applying Harmony patches...");
             harmony = new Harmony(PluginInfo.PLUGIN_GUID);
             harmony.PatchAll();
 
-            Logger.LogInfo($"Dash Cooldown Radial v{PluginInfo.PLUGIN_VERSION} loaded!");
+            Logger.LogInfo($"[DashCooldownRadial] v{PluginInfo.PLUGIN_VERSION} loaded successfully!");
         }
 
         void OnDestroy()
@@ -70,7 +76,7 @@ namespace HKSS.DashCooldownRadial
                 new ConfigDescription("Size of the radial indicator relative to character",
                 new AcceptableValueRange<float>(0.5f, 2.0f)));
 
-            Opacity = Config.Bind("Display", "Opacity", 0.7f,
+            Opacity = Config.Bind("Display", "Opacity", 0.85f,
                 new ConfigDescription("Opacity of the radial indicator",
                 new AcceptableValueRange<float>(0.1f, 1.0f)));
 
@@ -84,11 +90,11 @@ namespace HKSS.DashCooldownRadial
                 new ConfigDescription("Delay before hiding when dash is available",
                 new AcceptableValueRange<float>(0f, 2f)));
 
-            CooldownColor = Config.Bind("Display", "CooldownColor", new Color(1f, 0.3f, 0.3f, 1f),
-                "Color when dash is on cooldown");
+            CooldownColor = Config.Bind("Display", "CooldownColor", new Color(180f/255f, 61f/255f, 62f/255f, 1f),
+                "Color when dash is on cooldown (HK Red)");
 
-            ReadyColor = Config.Bind("Display", "ReadyColor", new Color(0.3f, 1f, 0.3f, 1f),
-                "Color when dash is ready");
+            ReadyColor = Config.Bind("Display", "ReadyColor", new Color(120f/255f, 180f/255f, 120f/255f, 1f),
+                "Color when dash is ready (Pastel Green)");
 
             Position = Config.Bind("Display", "Position", RadialPosition.AroundCharacter,
                 "Position of the radial indicator");
@@ -97,12 +103,22 @@ namespace HKSS.DashCooldownRadial
         public void CreateRadialIndicator()
         {
             if (radialObject != null)
+            {
+                Logger.LogWarning("[DashCooldownRadial] RadialIndicator already exists, skipping creation");
                 return;
+            }
 
+            Logger.LogInfo("[DashCooldownRadial] Creating DashCooldownRadial GameObject");
             radialObject = new GameObject("DashCooldownRadial");
-            radialObject.AddComponent<RadialIndicator>();
-            radialObject.AddComponent<DashTracker>();
+
+            Logger.LogInfo("[DashCooldownRadial] Adding RadialIndicator component");
+            var radialIndicator = radialObject.AddComponent<RadialIndicator>();
+
+            Logger.LogInfo("[DashCooldownRadial] Adding DashTracker component");
+            var dashTracker = radialObject.AddComponent<DashTracker>();
+
             DontDestroyOnLoad(radialObject);
+            Logger.LogInfo("[DashCooldownRadial] GameObject created and marked as DontDestroyOnLoad");
         }
 
         public void DestroyRadialIndicator()

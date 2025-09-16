@@ -10,20 +10,37 @@ namespace HKSS.DashCooldownRadial
         private float dashCooldownDuration = 0.4f; // Default dash cooldown in Hollow Knight
         private bool canDash = true;
         private bool wasInDash = false;
+        private int frameCount = 0;
+
+        void Awake()
+        {
+            DashCooldownPlugin.ModLogger?.LogInfo("[DashTracker] Awake called");
+        }
 
         void Start()
         {
-            DashCooldownPlugin.ModLogger?.LogInfo("DashTracker started");
-            DashCooldownPlugin.Instance.CreateRadialIndicator();
+            DashCooldownPlugin.ModLogger?.LogInfo("[DashTracker] Start called - tracker is active");
         }
 
         void Update()
         {
+            frameCount++;
+
             if (heroController == null)
             {
                 heroController = HeroController.instance;
                 if (heroController == null)
+                {
+                    if (frameCount % 60 == 0)
+                    {
+                        DashCooldownPlugin.ModLogger?.LogDebug("[DashTracker] Waiting for HeroController.instance...");
+                    }
                     return;
+                }
+                else
+                {
+                    DashCooldownPlugin.ModLogger?.LogInfo("[DashTracker] HeroController found!");
+                }
             }
 
             // Track dash state
@@ -32,11 +49,13 @@ namespace HKSS.DashCooldownRadial
             if (isInDash && !wasInDash)
             {
                 // Just started dashing
+                DashCooldownPlugin.ModLogger?.LogInfo($"[DashTracker] Dash started! (dashing: {heroController.cState.dashing}, backDashing: {heroController.cState.backDashing})");
                 OnDashStart();
             }
             else if (!isInDash && wasInDash)
             {
                 // Just finished dashing
+                DashCooldownPlugin.ModLogger?.LogInfo("[DashTracker] Dash ended!");
                 OnDashEnd();
             }
 
@@ -51,6 +70,14 @@ namespace HKSS.DashCooldownRadial
                 {
                     canDash = true;
                     dashCooldownTimer = 0f;
+                    DashCooldownPlugin.ModLogger?.LogInfo("[DashTracker] Dash cooldown complete - dash is ready!");
+                }
+
+                // Log cooldown progress every 10 frames
+                if (frameCount % 10 == 0)
+                {
+                    float percent = dashCooldownTimer / dashCooldownDuration;
+                    DashCooldownPlugin.ModLogger?.LogDebug($"[DashTracker] Cooldown: {percent:P1} ({dashCooldownTimer:F2}s remaining)");
                 }
             }
 
@@ -67,14 +94,14 @@ namespace HKSS.DashCooldownRadial
 
         private void OnDashStart()
         {
-            DashCooldownPlugin.ModLogger?.LogDebug("Dash started");
             canDash = false;
             dashCooldownTimer = dashCooldownDuration;
+            DashCooldownPlugin.ModLogger?.LogInfo($"[DashTracker] Cooldown started: {dashCooldownDuration}s");
         }
 
         private void OnDashEnd()
         {
-            DashCooldownPlugin.ModLogger?.LogDebug("Dash ended");
+            // Dash ended - cooldown continues running
         }
 
         void OnDestroy()
@@ -90,21 +117,21 @@ namespace HKSS.DashCooldownRadial
         [HarmonyPostfix]
         public static void OnHeroStart(HeroController __instance)
         {
-            DashCooldownPlugin.ModLogger?.LogInfo("HeroController started - dash tracking active");
+            DashCooldownPlugin.ModLogger?.LogInfo("[DashPatches] HeroController.Start() called - hero initialized");
         }
 
         [HarmonyPatch(typeof(HeroController), "HeroDash")]
         [HarmonyPostfix]
         public static void OnHeroDash(HeroController __instance)
         {
-            DashCooldownPlugin.ModLogger?.LogDebug("HeroDash triggered");
+            DashCooldownPlugin.ModLogger?.LogInfo("[DashPatches] HeroDash() method called");
         }
 
         [HarmonyPatch(typeof(HeroController), "BackDash")]
         [HarmonyPostfix]
         public static void OnBackDash(HeroController __instance)
         {
-            DashCooldownPlugin.ModLogger?.LogDebug("BackDash triggered");
+            DashCooldownPlugin.ModLogger?.LogInfo("[DashPatches] BackDash() method called");
         }
 
         // Try to capture the actual dash cooldown value
@@ -114,7 +141,7 @@ namespace HKSS.DashCooldownRadial
         {
             if (DashCooldownPlugin.ModLogger != null && Time.frameCount % 60 == 0)
             {
-                DashCooldownPlugin.ModLogger.LogDebug($"CanDash: {__result}");
+                DashCooldownPlugin.ModLogger.LogDebug($"[DashPatches] CanDash() returns: {__result}");
             }
         }
     }
