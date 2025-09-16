@@ -1,0 +1,1 @@
+Displays a circular cooldown indicator for your dash ability. The radial fill shows time remaining, changes color when ready, and can pulse for visibility. Positions dynamically near your character.

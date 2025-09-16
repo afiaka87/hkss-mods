@@ -1,0 +1,1 @@
+Tracks jump duration and displays air time statistics. Shows current jump time, session maximum, and a visual histogram of recent jumps. Perfect for mastering platforming sections and optimizing movement.

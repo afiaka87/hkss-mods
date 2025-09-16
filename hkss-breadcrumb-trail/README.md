@@ -4,7 +4,7 @@ A BepInEx mod for Hollow Knight: Silksong that creates a visual trail showing yo
 
 ## Quick Download
 
-**[Download HKSS.BreadcrumbTrail.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.BreadcrumbTrail.dll)**
+https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.BreadcrumbTrail.dll
 
 ## Features
 

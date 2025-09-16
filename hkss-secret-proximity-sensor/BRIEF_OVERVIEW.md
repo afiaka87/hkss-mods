@@ -1,0 +1,1 @@
+Detects nearby hidden items and secrets with visual and audio cues. Screen edges pulse and intensity increases as you approach collectibles. Customizable detection range and alert styles help find missed items.

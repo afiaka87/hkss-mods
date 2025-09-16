@@ -1,0 +1,1 @@
+Displays floating damage values when hitting enemies. Customize colors, size, and animation speed to match your preference. Instantly see attack effectiveness and combo damage totals.

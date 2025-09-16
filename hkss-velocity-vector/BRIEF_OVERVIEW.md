@@ -1,0 +1,1 @@
+Shows real-time speed and direction with an arrow indicator. Choose display units (u/s, m/s, px/f) and track peak speed. Configurable position, colors, and size for optimal visibility.

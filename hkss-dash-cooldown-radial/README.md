@@ -4,7 +4,7 @@ A BepInEx mod for Hollow Knight: Silksong that displays a radial cooldown indica
 
 ## Quick Download
 
-**[Download HKSS.DashCooldownRadial.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DashCooldownRadial.dll)**
+https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DashCooldownRadial.dll
 
 ## Features
 

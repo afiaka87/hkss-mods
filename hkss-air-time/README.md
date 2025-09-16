@@ -1,17 +1,18 @@
-# hkss-damage-numbers
+# hkss-air-time
 
-A BepInEx mod for Hollow Knight: Silksong that displays floating damage numbers when attacking enemies.
+A BepInEx mod for Hollow Knight: Silksong that tracks and displays jump duration statistics.
 
 ## Quick Download
 
-https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DamageNumbers.dll
+https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.AirTime.dll
 
 ## Features
 
-- **Floating Damage Numbers**: See exactly how much damage you deal with each attack
-- **Customizable Display**: Configure colors, size, speed, and duration of damage numbers
-- **Performance Optimized**: Uses object pooling to minimize performance impact
-- **Optional Player Damage**: Can also show damage numbers when the player takes damage
+- **Current Jump Timer**: Real-time display of current air time during jumps
+- **Session Statistics**: Track total air time and maximum jump duration
+- **Jump History Histogram**: Visual representation of recent jump durations
+- **Customizable Display**: Configure position, colors, decimal precision, and history size
+- **Performance Optimized**: Efficient tracking with minimal performance impact
 
 ## Installation (Recommended: Nexus Mods BepInEx)
 
@@ -19,8 +20,8 @@ The easiest way to install is using the preconfigured BepInEx from Nexus Mods:
 
 1. Download BepInEx with Configuration Manager from: https://www.nexusmods.com/hollowknightsilksong/mods/26
 2. Extract all files to your Hollow Knight: Silksong game directory
-3. Download the [HKSS.DamageNumbers.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DamageNumbers.dll) (or build from source - see Step 2 below)
-4. Place `HKSS.DamageNumbers.dll` in the `BepInEx/plugins/` folder
+3. Download the [HKSS.AirTime.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.AirTime.dll) (or build from source - see Step 2 below)
+4. Place `HKSS.AirTime.dll` in the `BepInEx/plugins/` folder
 5. Configure Steam for Proton and set launch options (see Steam Configuration below)
 6. Launch the game
 
@@ -84,7 +85,7 @@ You'll need to enter your password when prompted.
 
 1. Navigate to the mod directory:
 ```bash
-cd /path/to/hkss-damage-numbers
+cd /path/to/hkss-air-time
 ```
 
 2. Build in Release configuration:
@@ -92,18 +93,18 @@ cd /path/to/hkss-damage-numbers
 dotnet build -c Release
 ```
 
-This will create the compiled DLL at `bin/BepInEx/plugins/netstandard2.1/HKSS.DamageNumbers.dll`
+This will create the compiled DLL at `bin/BepInEx/plugins/netstandard2.1/HKSS.AirTime.dll`
 
 ### Step 4: Install the Mod
 
 Copy the built DLL directly to the plugins folder (NOT in a subfolder):
 ```bash
-cp bin/BepInEx/plugins/netstandard2.1/HKSS.DamageNumbers.dll "[GAME_PATH]/BepInEx/plugins/"
+cp bin/BepInEx/plugins/netstandard2.1/HKSS.AirTime.dll "[GAME_PATH]/BepInEx/plugins/"
 ```
 
 Example:
 ```bash
-cp bin/BepInEx/plugins/netstandard2.1/HKSS.DamageNumbers.dll "/home/deck/.local/share/Steam/steamapps/common/Hollow Knight Silksong/BepInEx/plugins/"
+cp bin/BepInEx/plugins/netstandard2.1/HKSS.AirTime.dll "/home/deck/.local/share/Steam/steamapps/common/Hollow Knight Silksong/BepInEx/plugins/"
 ```
 
 ### Steam Configuration (CRITICAL)
@@ -128,7 +129,7 @@ Your game folder should contain:
 - `BepInEx/` folder with subdirectories: `core/`, `config/`, `plugins/`, `cache/`, `patchers/`
 - `winhttp.dll` (Windows DLL for BepInEx hook)
 - `doorstop_config.ini` (BepInEx configuration)
-- `BepInEx/plugins/HKSS.DamageNumbers.dll` (the mod)
+- `BepInEx/plugins/HKSS.AirTime.dll` (the mod)
 
 Launch the game. BepInEx will create a `LogOutput.log` file in the BepInEx folder if it's working.
 
@@ -141,7 +142,7 @@ Launch the game. BepInEx will create a `LogOutput.log` file in the BepInEx folde
 
 **Mod not loading:**
 - Check the DLL is directly in `BepInEx/plugins/` (not in a subfolder like `netstandard2.1`)
-- Look for `HKSS.DamageNumbers` in `BepInEx/LogOutput.log`
+- Look for `HKSS.AirTime` in `BepInEx/LogOutput.log`
 
 **Common Mistakes:**
 - Using Linux BepInEx with Proton (won't work - need Windows version)
@@ -154,21 +155,28 @@ Launch the game. BepInEx will create a `LogOutput.log` file in the BepInEx folde
 ## Configuration
 
 After running the game once with the mod, a configuration file will be created at:
-`BepInEx/config/com.hkss.damagenumbers.cfg`
+`BepInEx/config/com.hkss.airtime.cfg`
 
 ### Configuration Options
 
+**General**
 - **Enabled**: Enable/disable the mod
-- **Duration**: How long damage numbers remain visible (0.5-5 seconds)
-- **FloatSpeed**: Speed at which numbers float upward
-- **FontSize**: Size of damage text (12-72)
-- **NormalDamageColor**: Hex color for damage numbers
-- **ShowPlayerDamage**: Also show numbers when player takes damage
+
+**Display**
+- **Position**: Screen position (TopLeft, TopCenter, TopRight, MiddleLeft, MiddleCenter, MiddleRight, BottomLeft, BottomCenter, BottomRight)
+- **ShowCurrentJump**: Display current jump air time
+- **ShowSessionTotal**: Show total air time for the session
+- **ShowJumpHistory**: Display histogram of recent jumps
+- **HistorySize**: Number of jumps to track in history (5-50)
+- **DecimalPlaces**: Decimal precision for time display (0-3)
+- **TextColor**: Color of main text display (hex color)
+- **HistoryColor**: Color of history histogram (hex color)
+- **FontSize**: Font size for text display (12-48)
 
 ## Building
 
 ```bash
-cd HKSS-DamageNumbers
+cd hkss-air-time
 dotnet restore
 dotnet build -c Release
 ```
@@ -178,13 +186,15 @@ The built DLL will be in `bin/BepInEx/plugins/`
 ## Technical Details
 
 The mod uses:
-- **Harmony** patches to intercept damage calculations
-- **Unity UI** system for rendering text in world space
-- **Object pooling** for efficient number spawning
+- **Harmony patches** on HeroController to track ground/air state transitions
+- **OnGUI rendering** for displaying statistics and histogram
+- **Circular buffer** for efficient jump history tracking
+- **Real-time state monitoring** to accurately measure air time
 
 ## Known Issues
 
-- Damage numbers may occasionally appear at incorrect positions for very fast-moving enemies
+- Air time may include wall sliding time as "in air"
+- Very short hops (< 0.1s) may not register in history
 
 ## Credits
 

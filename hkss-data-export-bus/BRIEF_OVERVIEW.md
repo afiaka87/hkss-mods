@@ -1,0 +1,1 @@
+Streams game data to external tools via HTTP, WebSocket, TCP, and files. Integrates with OBS for automatic scene switching and LiveSplit for speedrun tracking. Web dashboard at localhost:8080 shows real-time stats.

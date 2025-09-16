@@ -1,0 +1,1 @@
+Displays your last 3-5 button inputs as a timeline strip. Shows attack, jump, dash, and directional inputs with timestamps. Useful for learning combos, debugging controls, and understanding input timing.

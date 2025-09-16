@@ -4,7 +4,7 @@ A BepInEx mod for Hollow Knight: Silksong that displays a real-time velocity vec
 
 ## Quick Download
 
-**[Download HKSS.VelocityVector.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.VelocityVector.dll)**
+https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.VelocityVector.dll
 
 ## Features
 

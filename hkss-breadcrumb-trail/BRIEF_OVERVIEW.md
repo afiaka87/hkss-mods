@@ -1,0 +1,1 @@
+Creates a visual trail showing your recent movement path. Colors change based on speed, height, or combat state. Configure trail duration, fade style, and width to suit your playstyle.
