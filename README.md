@@ -75,48 +75,6 @@ cp winhttp.dll "[GAME_PATH]/"
 cp doorstop_config.ini "[GAME_PATH]/"
 ``` 
 
-## Mod Implementation Status
-
-### Completed (9/25)
-- [x] **HKSS-DamageNumbers** - Floating damage numbers above enemies
-- [x] **HKSS-VelocityVector** - Real-time speed/direction display with arrow indicator
-- [x] **HKSS-AirTime** - Jump duration tracking with session statistics
-- [x] **HKSS-BreadcrumbTrail** - Fading path history with LineRenderer
-- [x] **HKSS-SecretProximity** - Hidden collectible detector with pulse indicator
-
-- [x] **HKSS-DashCooldownRadial** - Circular cooldown indicator around character
-- [x] **HKSS-DataExportBus** - External tool integration (OBS, LiveSplit, CSV/NDJSON)
-- [x] **HKSS-InputTimeline** - 3-5 second input history display
-
-### To Be Implemented (15/25)
-
-#### S-Tier (High Value, Easy Implementation)
-- [ ] Room Timer with Golds - Per-room speedrun splits
-- [ ] Silk Analytics Dashboard - Healing resource tracking
-
-#### A-Tier (Popular Demand, Moderate Complexity)
-- [ ] Rosary Flow Tracker - Currency income/loss visualization
-- [ ] Elevation Profile Chart - Height changes over time
-- [ ] Attempt Heatmap - Death clustering visualization
-
-#### B-Tier (Specialized but Valuable)
-- [ ] Jump Arc Predictor - Parabolic trajectory preview
-- [ ] Tool/Buff Timeline - Active effect durations
-- [ ] Heal Safety Predictor - Safe healing opportunity detection
-- [ ] Boss Stagger Meter - Hidden posture/stagger tracking
-
-#### C-Tier (Nice-to-Have QoL)
-- [ ] Room Completion Widget - Collectibles percentage
-- [ ] Fast Travel Network Map - Bench connection overlay
-- [ ] Shop Spend Planner - Purchase optimization
-- [ ] Stream-Safe Compact HUD - Minimal UI for streaming
-
-#### Accessibility & Polish
-- [ ] Colorblind Palette Presets - Visual accessibility modes
-- [ ] High-Contrast Glyph Mode - Bold symbol replacements
-- [ ] Minimalist Pace Bar - Pattern-based speedrun indicator
-- [ ] Coyote Time Visualizer - Jump grace period display
-
 ## Building from Source
 
 ### Prerequisites
