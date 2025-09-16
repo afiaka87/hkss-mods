@@ -2,6 +2,10 @@
 
 A BepInEx mod for Hollow Knight: Silksong that displays floating damage numbers when attacking enemies.
 
+## Quick Download
+
+**[Download HKSS.DamageNumbers.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DamageNumbers.dll)**
+
 ## Features
 
 - **Floating Damage Numbers**: See exactly how much damage you deal with each attack
@@ -15,7 +19,7 @@ The easiest way to install is using the preconfigured BepInEx from Nexus Mods:
 
 1. Download BepInEx with Configuration Manager from: https://www.nexusmods.com/hollowknightsilksong/mods/26
 2. Extract all files to your Hollow Knight: Silksong game directory
-3. Build this mod (see Step 2 below) or download the release DLL
+3. Download the [HKSS.DamageNumbers.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DamageNumbers.dll) (or build from source - see Step 2 below)
 4. Place `HKSS.DamageNumbers.dll` in the `BepInEx/plugins/` folder
 5. Configure Steam for Proton and set launch options (see Steam Configuration below)
 6. Launch the game

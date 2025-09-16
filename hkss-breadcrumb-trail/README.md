@@ -2,6 +2,10 @@
 
 A BepInEx mod for Hollow Knight: Silksong that creates a visual trail showing your recent movement path.
 
+## Quick Download
+
+**[Download HKSS.BreadcrumbTrail.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.BreadcrumbTrail.dll)**
+
 ## Features
 
 - **Visual Path History**: LineRenderer-based trail that follows your movement through the world
@@ -17,7 +21,7 @@ The easiest way to install is using the preconfigured BepInEx from Nexus Mods:
 
 1. Download BepInEx with Configuration Manager from: https://www.nexusmods.com/hollowknightsilksong/mods/26
 2. Extract all files to your Hollow Knight: Silksong game directory
-3. Build this mod (see Step 2 below) or download the release DLL
+3. Download the [HKSS.BreadcrumbTrail.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.BreadcrumbTrail.dll) (or build from source - see Step 2 below)
 4. Place `HKSS.BreadcrumbTrail.dll` in the `BepInEx/plugins/` folder
 5. Configure Steam for Proton and set launch options (see Steam Configuration below)
 6. Launch the game
