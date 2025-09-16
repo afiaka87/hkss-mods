@@ -1,4 +1,5 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using HarmonyLib;
@@ -16,60 +17,86 @@ namespace HKSS.BreadcrumbTrail
 
     public class BreadcrumbTrail : MonoBehaviour
     {
-        private List<TrailPoint> trail = new List<TrailPoint>();
-        private LineRenderer lineRenderer;
         private float lastDropTime = 0f;
         private HeroController heroController;
         private Rigidbody2D heroRigidbody;
-        private Material trailMaterial;
-        private Gradient colorGradient;
+        private MultiSceneTrailManager trailManager;
+        private TrailOptimizer optimizer;
+        private float statsLogTimer = 0f;
+        private const float STATS_LOG_INTERVAL = 10f; // Log stats every 10 seconds
+
+        void Awake()
+        {
+            try
+            {
+                BreadcrumbPlugin.ModLogger?.LogInfo("[BreadcrumbTrail] Awake starting...");
+
+                // Create or find the multi-scene trail manager
+                GameObject managerObj = GameObject.Find("MultiSceneTrailManager");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"[BreadcrumbTrail] Search for MultiSceneTrailManager: {managerObj != null}");
+
+                if (managerObj == null)
+                {
+                    BreadcrumbPlugin.ModLogger?.LogInfo("[BreadcrumbTrail] Creating new MultiSceneTrailManager GameObject...");
+                    managerObj = new GameObject("MultiSceneTrailManager");
+                    BreadcrumbPlugin.ModLogger?.LogInfo($"[BreadcrumbTrail] GameObject created: {managerObj != null}");
+
+                    DontDestroyOnLoad(managerObj);
+                    BreadcrumbPlugin.ModLogger?.LogInfo("[BreadcrumbTrail] DontDestroyOnLoad set");
+
+                    trailManager = managerObj.AddComponent<MultiSceneTrailManager>();
+                    BreadcrumbPlugin.ModLogger?.LogInfo($"[BreadcrumbTrail] MultiSceneTrailManager component added: {trailManager != null}");
+                }
+                else
+                {
+                    BreadcrumbPlugin.ModLogger?.LogInfo("[BreadcrumbTrail] Found existing MultiSceneTrailManager");
+                    trailManager = managerObj.GetComponent<MultiSceneTrailManager>();
+                    BreadcrumbPlugin.ModLogger?.LogInfo($"[BreadcrumbTrail] Got component: {trailManager != null}");
+                }
+
+                BreadcrumbPlugin.ModLogger?.LogInfo($"[BreadcrumbTrail] ✓ Awake complete - manager initialized: {trailManager != null}");
+
+                // Initialize optimizer if optimizations are enabled
+                if (BreadcrumbPlugin.Instance.EnableOptimizations.Value)
+                {
+                    BreadcrumbPlugin.ModLogger?.LogInfo("[BreadcrumbTrail] Initializing TrailOptimizer...");
+                    optimizer = new TrailOptimizer(BreadcrumbPlugin.ModLogger);
+                    UpdateOptimizerConfig();
+                    BreadcrumbPlugin.ModLogger?.LogInfo("[BreadcrumbTrail] ✓ TrailOptimizer initialized");
+                }
+            }
+            catch (Exception ex)
+            {
+                BreadcrumbPlugin.ModLogger?.LogError($"[BreadcrumbTrail] ✗ Awake failed: {ex.Message}");
+                BreadcrumbPlugin.ModLogger?.LogError($"  Stack: {ex.StackTrace}");
+            }
+        }
+
+        void UpdateOptimizerConfig()
+        {
+            if (optimizer != null)
+            {
+                optimizer.UpdateConfig(
+                    BreadcrumbPlugin.Instance.AngleCullThreshold.Value,
+                    BreadcrumbPlugin.Instance.MinPointDistance.Value,
+                    BreadcrumbPlugin.Instance.UseAdaptiveSampling.Value
+                );
+            }
+        }
 
         void Start()
         {
-            BreadcrumbPlugin.ModLogger?.LogInfo("BreadcrumbTrail started");
-            BreadcrumbPlugin.Instance.CreateTrailObject();
-            InitializeLineRenderer();
-            CreateColorGradient();
+            BreadcrumbPlugin.ModLogger?.LogInfo("BreadcrumbTrail Start - trail manager ready");
         }
 
-        void InitializeLineRenderer()
-        {
-            lineRenderer = gameObject.AddComponent<LineRenderer>();
-
-            // Create a simple unlit material for the trail
-            trailMaterial = new Material(Shader.Find("Sprites/Default"));
-            lineRenderer.material = trailMaterial;
-
-            lineRenderer.startWidth = BreadcrumbPlugin.Instance.TrailWidth.Value;
-            lineRenderer.endWidth = BreadcrumbPlugin.Instance.TrailWidth.Value * 0.5f;
-
-            // Set line renderer settings
-            lineRenderer.numCapVertices = 5;
-            lineRenderer.numCornerVertices = 5;
-            lineRenderer.alignment = LineAlignment.View;
-            lineRenderer.textureMode = LineTextureMode.Stretch;
-        }
-
-        void CreateColorGradient()
-        {
-            colorGradient = new Gradient();
-            GradientColorKey[] colorKeys = new GradientColorKey[2];
-            GradientAlphaKey[] alphaKeys = new GradientAlphaKey[3];
-
-            colorKeys[0] = new GradientColorKey(BreadcrumbPlugin.Instance.BaseColor.Value, 0f);
-            colorKeys[1] = new GradientColorKey(BreadcrumbPlugin.Instance.SpeedColor.Value, 1f);
-
-            alphaKeys[0] = new GradientAlphaKey(1f, 0f);
-            alphaKeys[1] = new GradientAlphaKey(0.5f, 0.5f);
-            alphaKeys[2] = new GradientAlphaKey(0f, 1f);
-
-            colorGradient.SetKeys(colorKeys, alphaKeys);
-            lineRenderer.colorGradient = colorGradient;
-        }
+        // Removed InitializeLineRenderer and CreateColorGradient - now handled by MultiSceneTrailManager
 
         void Update()
         {
             if (!BreadcrumbPlugin.Instance.Enabled.Value)
+                return;
+
+            if (trailManager == null)
                 return;
 
             if (heroController == null)
@@ -83,23 +110,35 @@ namespace HKSS.BreadcrumbTrail
                     return;
             }
 
+            // Use adaptive sampling rate if optimizer is active
+            float dropFrequency = BreadcrumbPlugin.Instance.DropFrequency.Value;
+            if (optimizer != null && BreadcrumbPlugin.Instance.UseAdaptiveSampling.Value)
+            {
+                dropFrequency = optimizer.GetCurrentSampleRate();
+            }
+
             // Check if we should drop a new point
-            if (Time.time - lastDropTime >= BreadcrumbPlugin.Instance.DropFrequency.Value)
+            if (Time.time - lastDropTime >= dropFrequency)
             {
                 DropTrailPoint();
                 lastDropTime = Time.time;
             }
 
-            // Clean up old points
-            RemoveOldPoints();
-
-            // Update line renderer
-            UpdateLineRenderer();
+            // Log optimizer statistics periodically
+            if (optimizer != null && BreadcrumbPlugin.Instance.ShowOptimizationStats.Value)
+            {
+                statsLogTimer += Time.deltaTime;
+                if (statsLogTimer >= STATS_LOG_INTERVAL)
+                {
+                    optimizer.LogStats();
+                    statsLogTimer = 0f;
+                }
+            }
         }
 
         void DropTrailPoint()
         {
-            if (heroController == null)
+            if (heroController == null || trailManager == null)
                 return;
 
             // Check combat state
@@ -110,120 +149,22 @@ namespace HKSS.BreadcrumbTrail
             Vector3 position = heroController.transform.position;
             float speed = heroRigidbody != null ? heroRigidbody.linearVelocity.magnitude : 0f;
 
-            TrailPoint newPoint = new TrailPoint
+            // Use optimizer to determine if we should add this point
+            if (optimizer != null && BreadcrumbPlugin.Instance.EnableOptimizations.Value)
             {
-                position = position,
-                timestamp = Time.time,
-                speed = speed,
-                inCombat = inCombat,
-                color = CalculatePointColor(position, speed, inCombat)
-            };
-
-            trail.Add(newPoint);
-
-            // Limit max points for performance
-            if (trail.Count > BreadcrumbPlugin.Instance.MaxPoints.Value)
-            {
-                trail.RemoveAt(0);
-            }
-        }
-
-        void RemoveOldPoints()
-        {
-            float currentTime = Time.time;
-            float duration = BreadcrumbPlugin.Instance.TrailDuration.Value;
-
-            trail.RemoveAll(p => currentTime - p.timestamp > duration);
-        }
-
-        void UpdateLineRenderer()
-        {
-            if (trail.Count < 2)
-            {
-                lineRenderer.positionCount = 0;
-                return;
-            }
-
-            lineRenderer.positionCount = trail.Count;
-
-            // Update positions and colors
-            Gradient gradient = new Gradient();
-            GradientColorKey[] colorKeys = new GradientColorKey[Mathf.Min(trail.Count, 8)];
-            GradientAlphaKey[] alphaKeys = new GradientAlphaKey[Mathf.Min(trail.Count, 8)];
-
-            for (int i = 0; i < trail.Count; i++)
-            {
-                TrailPoint point = trail[i];
-                lineRenderer.SetPosition(i, point.position);
-
-                // Calculate alpha based on age and fade style
-                float age = Time.time - point.timestamp;
-                float normalizedAge = age / BreadcrumbPlugin.Instance.TrailDuration.Value;
-                float alpha = CalculateFade(normalizedAge);
-
-                // Set gradient keys at intervals
-                int keyIndex = (i * (colorKeys.Length - 1)) / (trail.Count - 1);
-                if (keyIndex < colorKeys.Length)
+                float timeSinceLastPoint = Time.time - lastDropTime;
+                if (!optimizer.ShouldAddPoint(position, speed, inCombat, timeSinceLastPoint))
                 {
-                    float gradientTime = (float)i / (trail.Count - 1);
-                    colorKeys[keyIndex] = new GradientColorKey(point.color, gradientTime);
-                    alphaKeys[keyIndex] = new GradientAlphaKey(alpha, gradientTime);
+                    return; // Skip this point based on optimization criteria
                 }
             }
 
-            gradient.SetKeys(colorKeys, alphaKeys);
-            lineRenderer.colorGradient = gradient;
+            // Add point to the multi-scene manager
+            trailManager.AddTrailPoint(position, speed, inCombat);
         }
 
-        Color CalculatePointColor(Vector3 position, float speed, bool inCombat)
-        {
-            var colorMode = BreadcrumbPlugin.Instance.TrailColorMode.Value;
-
-            switch (colorMode)
-            {
-                case ColorMode.Speed:
-                    float normalizedSpeed = Mathf.Clamp01(speed / 20f);
-                    return Color.Lerp(BreadcrumbPlugin.Instance.BaseColor.Value,
-                                     BreadcrumbPlugin.Instance.SpeedColor.Value,
-                                     normalizedSpeed);
-
-                case ColorMode.State:
-                    return inCombat ? BreadcrumbPlugin.Instance.CombatColor.Value
-                                   : BreadcrumbPlugin.Instance.BaseColor.Value;
-
-                case ColorMode.Height:
-                    float height = position.y;
-                    float normalizedHeight = Mathf.Clamp01((height + 10f) / 20f);
-                    return Color.Lerp(BreadcrumbPlugin.Instance.BaseColor.Value,
-                                     BreadcrumbPlugin.Instance.SpeedColor.Value,
-                                     normalizedHeight);
-
-                case ColorMode.Static:
-                default:
-                    return BreadcrumbPlugin.Instance.BaseColor.Value;
-            }
-        }
-
-        float CalculateFade(float normalizedAge)
-        {
-            var fadeStyle = BreadcrumbPlugin.Instance.TrailFadeStyle.Value;
-
-            switch (fadeStyle)
-            {
-                case FadeStyle.Exponential:
-                    return Mathf.Pow(1f - normalizedAge, 2f);
-
-                case FadeStyle.Stepped:
-                    if (normalizedAge < 0.33f) return 1f;
-                    if (normalizedAge < 0.66f) return 0.66f;
-                    if (normalizedAge < 0.9f) return 0.33f;
-                    return 0.1f;
-
-                case FadeStyle.Linear:
-                default:
-                    return 1f - normalizedAge;
-            }
-        }
+        // Removed RemoveOldPoints, UpdateLineRenderer, CalculatePointColor, and CalculateFade
+        // These are now handled by MultiSceneTrailManager and SceneTrailRenderer
 
         bool IsInCombat()
         {
@@ -239,27 +180,137 @@ namespace HKSS.BreadcrumbTrail
 
         void OnDestroy()
         {
-            BreadcrumbPlugin.Instance?.DestroyTrailObject();
+            // Trail cleanup is now handled by MultiSceneTrailManager
+        }
+
+        void OnGUI()
+        {
+            // Display optimization statistics overlay if enabled
+            if (optimizer != null && BreadcrumbPlugin.Instance.ShowOptimizationStats.Value)
+            {
+                var stats = optimizer.GetStats();
+
+                GUI.color = Color.white;
+                GUI.backgroundColor = new Color(0, 0, 0, 0.7f);
+
+                GUIStyle style = new GUIStyle(GUI.skin.box)
+                {
+                    alignment = TextAnchor.UpperLeft,
+                    fontSize = 12,
+                    normal = { textColor = Color.white }
+                };
+
+                string statsText = $"Trail Optimizer Stats\n" +
+                                 $"Points Generated: {stats.TotalPointsGenerated}\n" +
+                                 $"Points Accepted: {stats.PointsAccepted}\n" +
+                                 $"Reduction: {stats.ReductionPercentage:F1}%\n" +
+                                 $"Culled by Angle: {stats.PointsCulledByAngle}\n" +
+                                 $"Culled by Distance: {stats.PointsCulledByDistance}\n" +
+                                 $"Sample Rate: {stats.CurrentSampleRate:F2}s\n" +
+                                 $"Complexity: {stats.MovementComplexity:F2}";
+
+                GUI.Box(new Rect(10, 10, 200, 140), statsText, style);
+            }
+        }
+
+        public void ResetOptimizer()
+        {
+            optimizer?.Reset();
         }
     }
 
     [HarmonyPatch]
     public static class TrailPatches
     {
-        [HarmonyPatch(typeof(HeroController), "Start")]
-        [HarmonyPostfix]
-        public static void OnHeroStart(HeroController __instance)
-        {
-            BreadcrumbPlugin.ModLogger?.LogInfo("HeroController started - creating trail object");
-            BreadcrumbPlugin.Instance?.CreateTrailObject();
-        }
-
+        // FIXED: Parameter name must match exactly - it's 'enterGate' not 'transitionPoint'
         [HarmonyPatch(typeof(HeroController), "EnterScene")]
         [HarmonyPostfix]
-        public static void OnSceneTransition(HeroController __instance)
+        public static void OnSceneTransition(HeroController __instance, TransitionPoint enterGate, float delayBeforeEnter)
         {
-            BreadcrumbPlugin.ModLogger?.LogInfo("Scene transition - clearing trail");
+            // Log detailed transition information
+            BreadcrumbPlugin.ModLogger?.LogInfo($"[HERO_ENTER_SCENE] TransitionPoint: {enterGate?.name ?? "null"}");
+
+            if (enterGate != null)
+            {
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  TransitionPoint Position: {enterGate.transform.position}");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  TransitionPoint Scene: {enterGate.gameObject.scene.name}");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  Delay Before Enter: {delayBeforeEnter}");
+
+                // Log transition point details
+                var fields = enterGate.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                foreach (var field in fields)
+                {
+                    try
+                    {
+                        var value = field.GetValue(enterGate);
+                        if (value != null && field.Name.ToLower().Contains("scene"))
+                        {
+                            BreadcrumbPlugin.ModLogger?.LogInfo($"  TransitionPoint.{field.Name}: {value}");
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            // Reset optimizer on scene transition
+            var breadcrumb = GameObject.Find("BreadcrumbTrail")?.GetComponent<BreadcrumbTrail>();
+            breadcrumb?.ResetOptimizer();
+
             // The trail will naturally clear due to the time-based removal
         }
+
+        // Additional patches to understand scene loading
+        [HarmonyPatch(typeof(GameManager), "LoadScene")]
+        [HarmonyPrefix]
+        public static void OnGameManagerLoadScene(string destScene)
+        {
+            BreadcrumbPlugin.ModLogger?.LogInfo($"[GameManager.LoadScene] Loading: {destScene}");
+        }
+
+        [HarmonyPatch(typeof(GameManager), "BeginSceneTransition")]
+        [HarmonyPrefix]
+        public static void OnBeginSceneTransition(GameManager __instance, GameManager.SceneLoadInfo info)
+        {
+            BreadcrumbPlugin.ModLogger?.LogInfo($"[GameManager.BeginSceneTransition] Starting transition");
+            if (info != null)
+            {
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  SceneName: {info.SceneName ?? "null"}");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  EntryGateName: {info.EntryGateName ?? "null"}");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  EntryDelay: {info.EntryDelay}");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  PreventCameraFadeOut: {info.PreventCameraFadeOut}");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  Visualization: {info.Visualization}");
+                BreadcrumbPlugin.ModLogger?.LogInfo($"  AlwaysUnloadUnusedAssets: {info.AlwaysUnloadUnusedAssets}");
+
+                // Log all fields of SceneLoadInfo using reflection
+                var fields = info.GetType().GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                foreach (var field in fields)
+                {
+                    try
+                    {
+                        BreadcrumbPlugin.ModLogger?.LogInfo($"  SceneLoadInfo.{field.Name}: {field.GetValue(info)}");
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(HeroController), "SetHeroParent")]
+        [HarmonyPostfix]
+        public static void OnSetHeroParent(Transform newParent)
+        {
+            if (newParent != null)
+            {
+                BreadcrumbPlugin.ModLogger?.LogInfo($"[HeroController.SetHeroParent] New parent: {newParent.name} in scene: {newParent.gameObject.scene.name}");
+            }
+        }
+
+        // Patch to understand coordinate changes
+        // NOTE: SetPositionToRespawn doesn't exist in Silksong, commented out
+        // [HarmonyPatch(typeof(HeroController), "SetPositionToRespawn")]
+        // [HarmonyPostfix]
+        // public static void OnSetPositionToRespawn(HeroController __instance)
+        // {
+        //     BreadcrumbPlugin.ModLogger?.LogInfo($"[HeroController.SetPositionToRespawn] Position: {__instance.transform.position}");
+        // }
     }
 }
