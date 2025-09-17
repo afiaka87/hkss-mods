@@ -36,9 +36,50 @@ namespace HKSS.DamageNumbers
         private void InitializeStyles()
         {
             normalStyle = new GUIStyle();
-            normalStyle.fontSize = (int)DamageNumbersPlugin.FontSize.Value;
+            normalStyle.fontSize = CalculateScaledFontSize();
             normalStyle.alignment = TextAnchor.MiddleCenter;
             normalStyle.fontStyle = FontStyle.Bold;
+        }
+
+        private int CalculateScaledFontSize()
+        {
+            float baseFontSize = DamageNumbersPlugin.BaseFontSize.Value;
+
+            if (!DamageNumbersPlugin.AutoScaleResolution.Value)
+            {
+                return (int)baseFontSize;
+            }
+
+            // Base resolution is 1280x720 (Steam Deck/720p)
+            // Use the height for scaling as it's more consistent across aspect ratios
+            float baseHeight = 720f;
+            float currentHeight = Screen.height;
+
+            // Linear scaling with adjustments for common resolutions
+            float scaleFactor = currentHeight / baseHeight;
+
+            // Add extra boost for high resolutions where linear isn't enough
+            if (currentHeight >= 1440) // 1440p and above
+            {
+                scaleFactor *= 1.2f; // 20% extra boost
+            }
+            if (currentHeight >= 2160) // 4K
+            {
+                scaleFactor *= 1.15f; // Additional 15% for 4K (35% total boost)
+            }
+
+            // Apply minimum scale
+            scaleFactor = Mathf.Max(scaleFactor, 1.0f);
+
+            // Apply maximum scale to prevent text from being too large
+            scaleFactor = Mathf.Min(scaleFactor, 4f);
+
+            int scaledFontSize = Mathf.RoundToInt(baseFontSize * scaleFactor);
+
+            // Log the scaling for debugging
+            DamageNumbersPlugin.Log.LogInfo($"Resolution scaling: {Screen.width}x{Screen.height} -> Scale: {scaleFactor:F2} -> Font: {scaledFontSize}");
+
+            return scaledFontSize;
         }
 
         public static void ShowDamage(Vector3 worldPosition, int damage, DamageType type = DamageType.Enemy)
@@ -139,6 +180,12 @@ namespace HKSS.DamageNumbers
         {
             if (!DamageNumbersPlugin.Enabled.Value || Camera.main == null)
                 return;
+
+            // Recalculate base font size if resolution changed
+            if (normalStyle.fontSize != CalculateScaledFontSize())
+            {
+                InitializeStyles();
+            }
 
             foreach (var number in activeNumbers)
             {

@@ -7,6 +7,7 @@ A BepInEx mod for Hollow Knight: Silksong that displays floating damage numbers 
 - **Enemy Damage Numbers**: Golden floating numbers that rise when you damage enemies
 - **Player Damage Numbers**: Crimson sinking numbers with warning pulse when you take damage
 - **Distinct Visual Feedback**: Positive (enemy damage) vs negative (player damage) animations
+- **Resolution Scaling**: Automatically adjusts text size for different screen resolutions (720p to 4K)
 - **Fully Configurable**: Customize colors, size, speed, and duration
 - **Performance Optimized**: Uses object pooling to minimize performance impact
 
@@ -33,7 +34,8 @@ After first run, configure at: `BepInEx/config/com.hkss.damagenumbers.cfg`
 - **ShowPlayerDamage**: Show player damage numbers (default: true)
 - **Duration**: How long numbers stay visible (0.5-5 seconds)
 - **FloatSpeed**: Animation speed
-- **FontSize**: Text size (12-72)
+- **BaseFontSize**: Base text size that scales with resolution (12-72)
+- **AutoScaleResolution**: Automatically scale font size based on screen resolution (default: true)
 
 ## Building from Source
 

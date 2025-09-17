@@ -21,7 +21,8 @@ namespace HKSS.DamageNumbers
         internal static ConfigEntry<bool> Enabled;
         internal static ConfigEntry<float> DisplayDuration;
         internal static ConfigEntry<float> FloatSpeed;
-        internal static ConfigEntry<float> FontSize;
+        internal static ConfigEntry<float> BaseFontSize;
+        internal static ConfigEntry<bool> AutoScaleResolution;
         internal static ConfigEntry<string> EnemyDamageColor;
         internal static ConfigEntry<string> PlayerDamageColor;
         internal static ConfigEntry<bool> ShowPlayerDamage;
@@ -77,14 +78,21 @@ namespace HKSS.DamageNumbers
                 )
             );
 
-            FontSize = Config.Bind(
+            BaseFontSize = Config.Bind(
                 "Display",
-                "FontSize",
-                24f,
+                "BaseFontSize",
+                36f,
                 new ConfigDescription(
-                    "Size of damage number text",
-                    new AcceptableValueRange<float>(12f, 72f)
+                    "Base size of damage number text (scales with resolution)",
+                    new AcceptableValueRange<float>(12f, 100f)
                 )
+            );
+
+            AutoScaleResolution = Config.Bind(
+                "Display",
+                "AutoScaleResolution",
+                true,
+                "Automatically scale font size based on screen resolution"
             );
 
             EnemyDamageColor = Config.Bind(
