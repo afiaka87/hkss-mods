@@ -1,191 +1,53 @@
 # hkss-damage-numbers
 
-A BepInEx mod for Hollow Knight: Silksong that displays floating damage numbers when attacking enemies.
-
-## Quick Download
-
-https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DamageNumbers.dll
+A BepInEx mod for Hollow Knight: Silksong that displays floating damage numbers when attacking enemies or taking damage.
 
 ## Features
 
-- **Floating Damage Numbers**: See exactly how much damage you deal with each attack
-- **Customizable Display**: Configure colors, size, speed, and duration of damage numbers
+- **Enemy Damage Numbers**: Golden floating numbers that rise when you damage enemies
+- **Player Damage Numbers**: Crimson sinking numbers with warning pulse when you take damage
+- **Distinct Visual Feedback**: Positive (enemy damage) vs negative (player damage) animations
+- **Fully Configurable**: Customize colors, size, speed, and duration
 - **Performance Optimized**: Uses object pooling to minimize performance impact
-- **Optional Player Damage**: Can also show damage numbers when the player takes damage
 
-## Installation (Recommended: Nexus Mods BepInEx)
+## Quick Download
 
-The easiest way to install is using the preconfigured BepInEx from Nexus Mods:
+**[Download HKSS.DamageNumbers.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DamageNumbers.dll)**
 
-1. Download BepInEx with Configuration Manager from: https://www.nexusmods.com/hollowknightsilksong/mods/26
-2. Extract all files to your Hollow Knight: Silksong game directory
-3. Download the [HKSS.DamageNumbers.dll](https://github.com/afiaka87/hkss-mods/raw/main/releases/HKSS.DamageNumbers.dll) (or build from source - see Step 2 below)
-4. Place `HKSS.DamageNumbers.dll` in the `BepInEx/plugins/` folder
-5. Configure Steam for Proton and set launch options (see Steam Configuration below)
-6. Launch the game
+## Installation
 
-For manual BepInEx installation, see Advanced Installation section below.
+For detailed installation instructions, see the [main README](../README.md#installation-quick-start).
 
-## Advanced Installation (Steam Deck / Linux with Proton)
-
-### Prerequisites
-
-**Finding your game installation:**
-- Open Steam and navigate to your library
-- Right-click on Hollow Knight: Silksong
-- Select "Manage" → "Browse Local Files"
-- Note the path (common locations):
-  - Internal: `/home/deck/.local/share/Steam/steamapps/common/Hollow Knight Silksong`
-  - SD Card/External: `/run/media/deck/[DRIVE_NAME]/steamapps/common/Hollow Knight Silksong`
-
-### Step 1: Install BepInEx
-
-**Option A: Nexus Mods Preconfigured (Recommended)**
-1. Download from: https://www.nexusmods.com/hollowknightsilksong/mods/26
-2. Extract all files directly to your game directory
-3. The package includes Configuration Manager for easy in-game config changes (press F1)
-
-**Option B: Manual Installation**
-
-When using Proton, you need the Windows version of BepInEx:
-
-1. Download BepInEx Windows x64:
-```bash
-cd /tmp
-wget https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.3/BepInEx_win_x64_5.4.23.3.zip
-```
-
-2. Extract and prepare:
-```bash
-unzip -q BepInEx_win_x64_5.4.23.3.zip
-cd BepInEx && mkdir -p config plugins cache patchers && cd ..
-```
-
-3. Copy to game directory:
-```bash
-cp -r BepInEx "[GAME_PATH]/"
-cp winhttp.dll "[GAME_PATH]/"
-cp doorstop_config.ini "[GAME_PATH]/"
-```
-
-### Step 2: Install .NET SDK
-
-The mod needs to be compiled from source, which requires the .NET SDK.
-
-**Note for Steam Deck:** If you haven't set a password yet, run `passwd` first to create one.
-
-```bash
-sudo pacman -S dotnet-sdk
-```
-
-You'll need to enter your password when prompted.
-
-### Step 3: Build the Mod
-
-1. Navigate to the mod directory:
-```bash
-cd /path/to/hkss-damage-numbers
-```
-
-2. Build in Release configuration:
-```bash
-dotnet build -c Release
-```
-
-This will create the compiled DLL at `bin/BepInEx/plugins/netstandard2.1/HKSS.DamageNumbers.dll`
-
-### Step 4: Install the Mod
-
-Copy the built DLL directly to the plugins folder (NOT in a subfolder):
-```bash
-cp bin/BepInEx/plugins/netstandard2.1/HKSS.DamageNumbers.dll "[GAME_PATH]/BepInEx/plugins/"
-```
-
-Example:
-```bash
-cp bin/BepInEx/plugins/netstandard2.1/HKSS.DamageNumbers.dll "/home/deck/.local/share/Steam/steamapps/common/Hollow Knight Silksong/BepInEx/plugins/"
-```
-
-### Steam Configuration (CRITICAL)
-
-1. **Set Proton Compatibility:**
-   - Right-click Hollow Knight: Silksong in Steam
-   - Properties → Compatibility
-   - Check "Force the use of a specific Steam Play compatibility tool"
-   - Select Proton (e.g., Proton Experimental or Proton 9.0)
-   - **DO NOT use Steam Linux Runtime**
-
-2. **Set Launch Options:**
-   - Properties → General
-   - In "Launch Options", enter exactly:
-   ```
-   WINEDLLOVERRIDES="winhttp.dll=n,b" %command%
-   ```
-
-### Verify Installation
-
-Your game folder should contain:
-- `BepInEx/` folder with subdirectories: `core/`, `config/`, `plugins/`, `cache/`, `patchers/`
-- `winhttp.dll` (Windows DLL for BepInEx hook)
-- `doorstop_config.ini` (BepInEx configuration)
-- `BepInEx/plugins/HKSS.DamageNumbers.dll` (the mod)
-
-Launch the game. BepInEx will create a `LogOutput.log` file in the BepInEx folder if it's working.
-
-### Troubleshooting
-
-**Game won't start:**
-- Verify you're using the Windows version of BepInEx (not Linux)
-- Ensure Proton is selected, not Steam Linux Runtime
-- Check launch options are exactly as shown (typos will break it)
-
-**Mod not loading:**
-- Check the DLL is directly in `BepInEx/plugins/` (not in a subfolder like `netstandard2.1`)
-- Look for `HKSS.DamageNumbers` in `BepInEx/LogOutput.log`
-
-**Common Mistakes:**
-- Using Linux BepInEx with Proton (won't work - need Windows version)
-- Missing launch options or typos in `WINEDLLOVERRIDES`
-- Putting mod DLL in wrong location (must be directly in plugins folder)
-- Not creating the required BepInEx subdirectories (config, cache, patchers)
-
-**Note:** The Nexus Mods preconfigured BepInEx is the recommended installation method as it includes Configuration Manager and proper directory structure out of the box.
+Quick steps:
+1. Install BepInEx (see [parent README](../README.md))
+2. Download the DLL above
+3. Place in `BepInEx/plugins/` folder
+4. Launch the game
 
 ## Configuration
 
-After running the game once with the mod, a configuration file will be created at:
-`BepInEx/config/com.hkss.damagenumbers.cfg`
+After first run, configure at: `BepInEx/config/com.hkss.damagenumbers.cfg`
 
-### Configuration Options
+- **EnemyDamageColor**: Color for enemy damage (default: golden #FFD700)
+- **PlayerDamageColor**: Color for player damage (default: crimson #DC143C)
+- **ShowPlayerDamage**: Show player damage numbers (default: true)
+- **Duration**: How long numbers stay visible (0.5-5 seconds)
+- **FloatSpeed**: Animation speed
+- **FontSize**: Text size (12-72)
 
-- **Enabled**: Enable/disable the mod
-- **Duration**: How long damage numbers remain visible (0.5-5 seconds)
-- **FloatSpeed**: Speed at which numbers float upward
-- **FontSize**: Size of damage text (12-72)
-- **NormalDamageColor**: Hex color for damage numbers
-- **ShowPlayerDamage**: Also show numbers when player takes damage
-
-## Building
+## Building from Source
 
 ```bash
-cd HKSS-DamageNumbers
-dotnet restore
 dotnet build -c Release
 ```
 
-The built DLL will be in `bin/BepInEx/plugins/`
-
-## Technical Details
-
-The mod uses:
-- **Harmony** patches to intercept damage calculations
-- **Unity UI** system for rendering text in world space
-- **Object pooling** for efficient number spawning
+See [parent README](../README.md#building-from-source) for full build instructions.
 
 ## Known Issues
 
 - Damage numbers may occasionally appear at incorrect positions for very fast-moving enemies
-
-## Credits
-
-Created as a proof-of-concept mod for Hollow Knight: Silksong modding.
+- Numbers can overlap when multiple hits occur in the same location quickly
+- Config changes require game restart to take effect (no hot-reload)
+- Damage numbers don't scale with camera zoom/distance
+- No damage type indicators (critical hits, elemental damage, etc.) - shows raw damage only
+- Numbers may briefly appear through walls/geometry
