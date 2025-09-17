@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Data Export Bus Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e1e8ed;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #4fc3f7;
+            border-bottom: 2px solid #4fc3f7;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #81c784;
+            margin-top: 30px;
+        }
+        .status-card {
+            background: rgba(42, 42, 42, 0.8);
+            padding: 20px;
+            border-radius: 8px;
+            margin: 10px 0;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        .metric {
+            background: rgba(52, 52, 52, 0.6);
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 5px;
+            border-left: 3px solid #4fc3f7;
+        }
+        .label {
+            color: #9e9e9e;
+            font-weight: 500;
+            display: inline-block;
+            width: 150px;
+        }
+        .value {
+            color: #81c784;
+            font-weight: bold;
+        }
+        .connection-status {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .connection {
+            padding: 10px 20px;
+            background: rgba(52, 52, 52, 0.8);
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .connection.active::before {
+            content: '●';
+            color: #81c784;
+            font-size: 20px;
+        }
+        .connection.inactive::before {
+            content: '●';
+            color: #f44336;
+            font-size: 20px;
+        }
+        button {
+            background: linear-gradient(135deg, #4fc3f7 0%, #29b6f6 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .button-group {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid #f44336;
+            color: #ff8a80;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(79, 195, 247, 0.3);
+            border-radius: 50%;
+            border-top-color: #4fc3f7;
+            animation: spin 1s ease-in-out infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .timestamp {
+            color: #757575;
+            font-size: 12px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Hollow Knight: Silksong - Data Export Bus</h1>
+
+        <div class="status-card">
+            <h2>Connection Status</h2>
+            <div class="connection-status" id="connectionStatus">
+                <div class="loading"></div> Loading...
+            </div>
+        </div>
+
+        <div class="status-card">
+            <h2>System Status</h2>
+            <div id="status">
+                <div class="loading"></div> Loading...
+            </div>
+        </div>
+
+        <div class="button-group">
+            <button onclick="fetchStatus()">🔄 Refresh Status</button>
+            <button onclick="fetchMetrics()">📊 Get Metrics</button>
+            <button onclick="fetchState()">🎯 Get Current State</button>
+            <button onclick="fetchEvents()">📜 Recent Events</button>
+            <button onclick="clearDisplay()">🧹 Clear Display</button>
+        </div>
+
+        <div class="status-card">
+            <h2>Data Display</h2>
+            <div id="metrics"></div>
+            <div class="timestamp" id="lastUpdate"></div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function updateTimestamp() {
+            document.getElementById('lastUpdate').textContent =
+                'Last updated: ' + new Date().toLocaleTimeString();
+        }
+
+        async function fetchStatus() {
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+
+                // Update connection status
+                const connections = data.connections || {};
+                const statusHtml = `
+                    <div class="connection ${connections.http ? 'active' : 'inactive'}">
+                        HTTP Server
+                    </div>
+                    <div class="connection ${connections.tcp ? 'active' : 'inactive'}">
+                        TCP Server (LiveSplit)
+                    </div>
+                    <div class="connection ${connections.websocket ? 'active' : 'inactive'}">
+                        WebSocket Server
+                    </div>
+                    <div class="connection ${connections.file ? 'active' : 'inactive'}">
+                        File Export
+                    </div>
+                `;
+                document.getElementById('connectionStatus').innerHTML = statusHtml;
+
+                // Update system status
+                document.getElementById('status').innerHTML =
+                    '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+                updateTimestamp();
+            } catch (e) {
+                document.getElementById('status').innerHTML =
+                    '<div class="error">Error: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function fetchMetrics() {
+            try {
+                const response = await fetch('/api/metrics');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                document.getElementById('metrics').innerHTML =
+                    '<h3>Recent Metrics</h3><pre>' +
+                    escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+                updateTimestamp();
+            } catch (e) {
+                document.getElementById('metrics').innerHTML =
+                    '<div class="error">Error: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function fetchState() {
+            try {
+                const response = await fetch('/api/state');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                document.getElementById('metrics').innerHTML =
+                    '<h3>Current Game State</h3><pre>' +
+                    escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+                updateTimestamp();
+            } catch (e) {
+                document.getElementById('metrics').innerHTML =
+                    '<div class="error">Error: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        async function fetchEvents() {
+            try {
+                const response = await fetch('/api/events');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                document.getElementById('metrics').innerHTML =
+                    '<h3>Recent Events</h3><pre>' +
+                    escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+                updateTimestamp();
+            } catch (e) {
+                document.getElementById('metrics').innerHTML =
+                    '<div class="error">Error: ' + escapeHtml(e.message) + '</div>';
+            }
+        }
+
+        function clearDisplay() {
+            document.getElementById('metrics').innerHTML =
+                '<div class="metric">Display cleared. Use buttons above to fetch data.</div>';
+            updateTimestamp();
+        }
+
+        // Auto-refresh status every 3 seconds
+        autoRefreshInterval = setInterval(fetchStatus, 3000);
+
+        // Initial load
+        fetchStatus();
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+        });
+    </script>
+</body>
+</html>
