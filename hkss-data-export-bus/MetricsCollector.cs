@@ -21,48 +21,100 @@ namespace HKSS.DataExportBus
 
     public class MetricsCollector : MonoBehaviour
     {
+        // Cached components for performance
         private HeroController heroController;
+        private Rigidbody2D heroRigidBody;
+        private PlayerData playerData;
+
+        // Timing
         private float lastUpdateTime = 0f;
         private float updateInterval;
+        private float sessionStartTime;
+        private float sceneEnterTime = 0f;
+
+        // Tracking data
         private Vector3 lastPosition;
         private float totalDistance = 0f;
-        private float sessionStartTime;
         private int totalDamageTaken = 0;
         private int totalDamageDealt = 0;
         private int enemiesKilled = 0;
         private string currentScene = "";
-        private float sceneEnterTime = 0f;
         private List<string> recentEvents = new List<string>();
+
+        // Performance optimizations
+        private const int MAX_RECENT_EVENTS = 20;
+        private bool isInitialized = false;
 
         void Start()
         {
-            DataExportBusPlugin.ModLogger?.LogInfo("MetricsCollector started");
-            updateInterval = 1f / DataExportBusPlugin.Instance.UpdateFrequencyHz.Value;
-            sessionStartTime = Time.time;
+            try
+            {
+                DataExportBusPlugin.ModLogger?.LogInfo("MetricsCollector starting");
+                updateInterval = 1f / DataExportBusPlugin.Instance.UpdateFrequencyHz.Value;
+                sessionStartTime = Time.time;
+
+                // Try to initialize components early
+                InitializeComponents();
+
+                DataExportBusPlugin.ModLogger?.LogInfo("MetricsCollector started successfully");
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error starting MetricsCollector: {ex}");
+            }
         }
 
         void Update()
         {
+            try
+            {
+                if (!isInitialized)
+                {
+                    InitializeComponents();
+                    if (!isInitialized)
+                        return;
+                }
+
+                // Regular update based on configured frequency
+                if (Time.time - lastUpdateTime >= updateInterval)
+                {
+                    CollectAndBroadcastMetrics();
+                    lastUpdateTime = Time.time;
+                }
+
+                // Track distance traveled (only if we're tracking it)
+                if (DataExportBusPlugin.Instance.ExportPlayerData.Value)
+                {
+                    Vector3 currentPosition = heroController.transform.position;
+                    float distanceThisFrame = Vector3.Distance(currentPosition, lastPosition);
+                    if (distanceThisFrame > 0.001f) // Ignore tiny movements
+                    {
+                        totalDistance += distanceThisFrame;
+                    }
+                    lastPosition = currentPosition;
+                }
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error in MetricsCollector.Update: {ex.Message}");
+            }
+        }
+
+        private void InitializeComponents()
+        {
+            if (isInitialized)
+                return;
+
+            heroController = HeroController.instance;
             if (heroController == null)
-            {
-                heroController = HeroController.instance;
-                if (heroController == null)
-                    return;
+                return;
 
-                lastPosition = heroController.transform.position;
-            }
-
-            // Regular update based on configured frequency
-            if (Time.time - lastUpdateTime >= updateInterval)
-            {
-                CollectAndBroadcastMetrics();
-                lastUpdateTime = Time.time;
-            }
-
-            // Track distance traveled
-            float distanceThisFrame = Vector3.Distance(heroController.transform.position, lastPosition);
-            totalDistance += distanceThisFrame;
+            heroRigidBody = heroController.GetComponent<Rigidbody2D>();
+            playerData = PlayerData.instance;
             lastPosition = heroController.transform.position;
+            isInitialized = true;
+
+            DataExportBusPlugin.ModLogger?.LogInfo("MetricsCollector components initialized");
         }
 
         private void CollectAndBroadcastMetrics()
@@ -78,10 +130,10 @@ namespace HKSS.DataExportBus
                 var playerMetric = new GameMetric("player_update");
                 playerMetric.Data["position_x"] = heroController.transform.position.x;
                 playerMetric.Data["position_y"] = heroController.transform.position.y;
-                playerMetric.Data["velocity_x"] = heroController.GetComponent<Rigidbody2D>()?.linearVelocity.x ?? 0f;
-                playerMetric.Data["velocity_y"] = heroController.GetComponent<Rigidbody2D>()?.linearVelocity.y ?? 0f;
-                playerMetric.Data["health_current"] = PlayerData.instance?.health ?? 0;
-                playerMetric.Data["health_max"] = PlayerData.instance?.maxHealth ?? 0;
+                playerMetric.Data["velocity_x"] = heroRigidBody?.linearVelocity.x ?? 0f;
+                playerMetric.Data["velocity_y"] = heroRigidBody?.linearVelocity.y ?? 0f;
+                playerMetric.Data["health_current"] = playerData?.health ?? 0;
+                playerMetric.Data["health_max"] = playerData?.maxHealth ?? 0;
                 playerMetric.Data["soul_current"] = 0; // Soul/MP system may differ in Silksong
                 playerMetric.Data["soul_max"] = 0;
                 playerMetric.Data["grounded"] = heroController.cState.onGround;
@@ -136,15 +188,14 @@ namespace HKSS.DataExportBus
             {
                 var metric = new GameMetric("player_damaged");
                 metric.Data["damage"] = damage;
-                metric.Data["health_remaining"] = PlayerData.instance?.health ?? 0;
+                metric.Data["health_remaining"] = playerData?.health ?? 0;
                 metric.Data["position_x"] = heroController?.transform.position.x ?? 0;
                 metric.Data["position_y"] = heroController?.transform.position.y ?? 0;
 
                 DataExportBusPlugin.Instance.BroadcastMetric(metric);
             }
 
-            recentEvents.Add($"Damaged: {damage}");
-            TrimRecentEvents();
+            AddRecentEvent($"Damaged: {damage}");
         }
 
         public void OnEnemyDamaged(int damage, GameObject enemy)
@@ -178,8 +229,7 @@ namespace HKSS.DataExportBus
                 DataExportBusPlugin.Instance.BroadcastMetric(metric);
             }
 
-            recentEvents.Add($"Killed: {enemy?.name}");
-            TrimRecentEvents();
+            AddRecentEvent($"Killed: {enemy?.name}");
         }
 
         public void OnSceneChange(string sceneName)
@@ -196,8 +246,7 @@ namespace HKSS.DataExportBus
                 DataExportBusPlugin.Instance.BroadcastMetric(metric);
             }
 
-            recentEvents.Add($"Scene: {sceneName}");
-            TrimRecentEvents();
+            AddRecentEvent($"Scene: {sceneName}");
         }
 
         public void OnItemCollected(string itemName, int quantity = 1)
@@ -213,8 +262,7 @@ namespace HKSS.DataExportBus
                 DataExportBusPlugin.Instance.BroadcastMetric(metric);
             }
 
-            recentEvents.Add($"Item: {itemName} x{quantity}");
-            TrimRecentEvents();
+            AddRecentEvent($"Item: {itemName} x{quantity}");
         }
 
         public void OnAbilityUnlocked(string abilityName)
@@ -228,8 +276,7 @@ namespace HKSS.DataExportBus
                 DataExportBusPlugin.Instance.BroadcastMetric(metric);
             }
 
-            recentEvents.Add($"Ability: {abilityName}");
-            TrimRecentEvents();
+            AddRecentEvent($"Ability: {abilityName}");
         }
 
         public void OnBossEncounter(string bossName, string eventType)
@@ -244,8 +291,7 @@ namespace HKSS.DataExportBus
                 DataExportBusPlugin.Instance.BroadcastMetric(metric);
             }
 
-            recentEvents.Add($"Boss {eventType}: {bossName}");
-            TrimRecentEvents();
+            AddRecentEvent($"Boss {eventType}: {bossName}");
         }
 
         public List<string> GetRecentEvents()
@@ -253,9 +299,18 @@ namespace HKSS.DataExportBus
             return new List<string>(recentEvents);
         }
 
+        private void AddRecentEvent(string eventText)
+        {
+            if (recentEvents.Count >= MAX_RECENT_EVENTS)
+            {
+                recentEvents.RemoveAt(0);
+            }
+            recentEvents.Add(eventText);
+        }
+
         private void TrimRecentEvents()
         {
-            while (recentEvents.Count > 20)
+            while (recentEvents.Count > MAX_RECENT_EVENTS)
             {
                 recentEvents.RemoveAt(0);
             }
@@ -305,15 +360,17 @@ namespace HKSS.DataExportBus
             }
         }
 
-        [HarmonyPatch(typeof(HealthManager), "Die")]
-        [HarmonyPostfix]
-        public static void OnEnemyDeath(HealthManager __instance)
-        {
-            if (__instance.gameObject != HeroController.instance?.gameObject)
-            {
-                DataExportBusPlugin.Instance?.GetMetricsCollector()?.OnEnemyKilled(__instance.gameObject);
-            }
-        }
+        // Temporarily disabled due to ambiguous method match
+        // TODO: Determine correct Die method signature in Silksong
+        // [HarmonyPatch(typeof(HealthManager), "Die")]
+        // [HarmonyPostfix]
+        // public static void OnEnemyDeath(HealthManager __instance)
+        // {
+        //     if (__instance.gameObject != HeroController.instance?.gameObject)
+        //     {
+        //         DataExportBusPlugin.Instance?.GetMetricsCollector()?.OnEnemyKilled(__instance.gameObject);
+        //     }
+        // }
 
         [HarmonyPatch(typeof(HeroController), "EnterScene")]
         [HarmonyPostfix]

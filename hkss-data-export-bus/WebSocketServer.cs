@@ -12,7 +12,7 @@ using Newtonsoft.Json.Linq;
 
 namespace HKSS.DataExportBus
 {
-    public class WebSocketServer
+    public class WebSocketServer : IDisposable
     {
         private HttpListener listener;
         private readonly int port;
@@ -24,6 +24,9 @@ namespace HKSS.DataExportBus
         private Timer pingTimer;
         private const int PING_INTERVAL_MS = 30000; // Ping every 30 seconds
         private const int PING_TIMEOUT_MS = 10000; // 10 second timeout for pong
+        private const int MAX_CONNECTED_CLIENTS = 50; // Reasonable limit for WebSocket clients
+        private const int MAX_SUBSCRIBED_EVENTS_PER_CLIENT = 100; // Limit subscriptions per client
+        private const int MAX_OBS_SCENE_DATA_ENTRIES = 100; // Limit OBS scene data entries
 
         // Simplified OBS-like scene management (not full OBS 5.0 protocol)
         private readonly Dictionary<string, object> obsSceneData = new Dictionary<string, object>();
@@ -59,7 +62,17 @@ namespace HKSS.DataExportBus
                         if (completedTask == contextTask)
                         {
                             var context = await contextTask;
-                            _ = Task.Run(() => HandleWebSocketConnection(context, cancellationToken), cancellationToken);
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await HandleWebSocketConnection(context, cancellationToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    DataExportBusPlugin.ModLogger?.LogError($"WebSocket connection handler error: {ex}");
+                                }
+                            }, cancellationToken);
                         }
                     }
                     catch (HttpListenerException ex) when (ex.ErrorCode == 995)
@@ -123,6 +136,36 @@ namespace HKSS.DataExportBus
 
                 lock (clientLock)
                 {
+                    // Enforce maximum client limit
+                    if (connectedClients.Count >= MAX_CONNECTED_CLIENTS)
+                    {
+                        // Remove the oldest client to make room
+                        var oldestClient = connectedClients.FirstOrDefault();
+                        if (oldestClient != null)
+                        {
+                            DataExportBusPlugin.ModLogger?.LogWarning($"Maximum client limit ({MAX_CONNECTED_CLIENTS}) reached. Disconnecting oldest client: {oldestClient.Id}");
+                            connectedClients.Remove(oldestClient);
+
+                            // Clean disconnect the oldest client
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    if (oldestClient.Socket?.State == WebSocketState.Open)
+                                    {
+                                        await oldestClient.Socket.CloseAsync(WebSocketCloseStatus.PolicyViolation,
+                                            "Server at maximum capacity", CancellationToken.None);
+                                    }
+                                    oldestClient.Socket?.Dispose();
+                                }
+                                catch (Exception ex)
+                                {
+                                    DataExportBusPlugin.ModLogger?.LogError($"Error disconnecting oldest client: {ex.Message}");
+                                }
+                            });
+                        }
+                    }
+
                     connectedClients.Add(client);
                 }
 
@@ -309,6 +352,13 @@ namespace HKSS.DataExportBus
             {
                 if (!client.SubscribedEvents.Contains(eventType))
                 {
+                    // Enforce subscription limit per client
+                    if (client.SubscribedEvents.Count >= MAX_SUBSCRIBED_EVENTS_PER_CLIENT)
+                    {
+                        DataExportBusPlugin.ModLogger?.LogWarning($"Client {client.Id} reached maximum subscription limit ({MAX_SUBSCRIBED_EVENTS_PER_CLIENT})");
+                        await SendMessage(client, new { type = "error", message = $"Maximum subscription limit ({MAX_SUBSCRIBED_EVENTS_PER_CLIENT}) reached" });
+                        break;
+                    }
                     client.SubscribedEvents.Add(eventType);
                 }
             }
@@ -335,6 +385,18 @@ namespace HKSS.DataExportBus
 
             if (!string.IsNullOrEmpty(sourceName) && settings != null)
             {
+                // Enforce scene data limit
+                if (!obsSceneData.ContainsKey(sourceName) && obsSceneData.Count >= MAX_OBS_SCENE_DATA_ENTRIES)
+                {
+                    // Remove oldest entry (first in dictionary)
+                    var oldestKey = obsSceneData.Keys.FirstOrDefault();
+                    if (oldestKey != null)
+                    {
+                        DataExportBusPlugin.ModLogger?.LogWarning($"OBS scene data limit reached ({MAX_OBS_SCENE_DATA_ENTRIES}). Removing oldest entry: {oldestKey}");
+                        obsSceneData.Remove(oldestKey);
+                    }
+                }
+
                 // Store settings for the source
                 obsSceneData[sourceName] = settings;
 
@@ -504,51 +566,59 @@ namespace HKSS.DataExportBus
 
         private void BroadcastRawMessage(string message)
         {
+            List<WebSocketClient> clientsToSend;
             lock (clientLock)
             {
-                var disconnectedClients = new List<WebSocketClient>();
+                clientsToSend = connectedClients
+                    .Where(c => c.IsAuthenticated || string.IsNullOrEmpty(authToken))
+                    .ToList();
+            }
 
-                foreach (var client in connectedClients)
+            var buffer = Encoding.UTF8.GetBytes(message);
+
+            foreach (var client in clientsToSend)
+            {
+                _ = Task.Run(async () =>
                 {
-                    if (!client.IsAuthenticated && !string.IsNullOrEmpty(authToken))
-                        continue;
-
-                    Task.Run(async () =>
+                    try
                     {
-                        try
+                        if (client.Socket.State == WebSocketState.Open)
                         {
-                            if (client.Socket.State == WebSocketState.Open)
-                            {
-                                var buffer = Encoding.UTF8.GetBytes(message);
-                                await client.Socket.SendAsync(
-                                    new ArraySegment<byte>(buffer),
-                                    WebSocketMessageType.Text,
-                                    true,
-                                    CancellationToken.None
-                                );
-                            }
-                            else
-                            {
-                                lock (clientLock)
-                                {
-                                    disconnectedClients.Add(client);
-                                }
-                            }
+                            await client.Socket.SendAsync(
+                                new ArraySegment<byte>(buffer),
+                                WebSocketMessageType.Text,
+                                true,
+                                CancellationToken.None
+                            );
                         }
-                        catch
+                        else
                         {
-                            lock (clientLock)
-                            {
-                                disconnectedClients.Add(client);
-                            }
+                            RemoveClient(client);
                         }
-                    });
-                }
+                    }
+                    catch (Exception ex)
+                    {
+                        DataExportBusPlugin.ModLogger?.LogError($"Error broadcasting to client: {ex.Message}");
+                        RemoveClient(client);
+                    }
+                });
+            }
+        }
 
-                foreach (var client in disconnectedClients)
-                {
-                    connectedClients.Remove(client);
-                }
+        private void RemoveClient(WebSocketClient client)
+        {
+            lock (clientLock)
+            {
+                connectedClients.Remove(client);
+            }
+
+            try
+            {
+                client?.Socket?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogWarning($"Error disposing client {client?.Id} socket: {ex.Message}");
             }
         }
 
@@ -602,7 +672,14 @@ namespace HKSS.DataExportBus
                                     await SendMessage(client, new { type = "ping", timestamp = DateTime.UtcNow });
                                     client.PingPending = true;
                                 }
-                                catch { }
+                                catch (Exception ex)
+                                {
+                                    DataExportBusPlugin.ModLogger?.LogError($"Error sending ping to client {client.Id}: {ex.Message}");
+                                    lock (clientLock)
+                                    {
+                                        clientsToRemove.Add(client);
+                                    }
+                                }
                             });
                         }
                     }
@@ -624,18 +701,67 @@ namespace HKSS.DataExportBus
         public void Stop()
         {
             isRunning = false;
-            pingTimer?.Dispose();
-            listener?.Stop();
-            listener?.Close();
+
+            try
+            {
+                pingTimer?.Dispose();
+                pingTimer = null;
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error disposing ping timer: {ex}");
+            }
+
+            try
+            {
+                listener?.Stop();
+                listener?.Close();
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error stopping listener: {ex}");
+            }
 
             lock (clientLock)
             {
                 foreach (var client in connectedClients)
                 {
-                    client.Socket?.Dispose();
+                    try
+                    {
+                        if (client.Socket?.State == WebSocketState.Open)
+                        {
+                            client.Socket?.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server stopping", CancellationToken.None).Wait(1000);
+                        }
+                        client.Socket?.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        DataExportBusPlugin.ModLogger?.LogWarning($"Error closing WebSocket client during shutdown: {ex.Message}");
+                    }
                 }
                 connectedClients.Clear();
             }
+        }
+
+        private bool _disposed = false;
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
+            {
+                Stop();
+            }
+
+            _disposed = true;
         }
 
         private bool IsAllowedOrigin(string origin)

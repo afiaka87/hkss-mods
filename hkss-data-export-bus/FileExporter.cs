@@ -6,109 +6,223 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using HKSS.DataExportBus.Security;
+using BepInEx.Logging;
 
 namespace HKSS.DataExportBus
 {
     public class FileExporter : IDisposable
     {
-        private readonly string exportDirectory;
-        private readonly ExportFormat format;
-        private readonly long maxFileSizeBytes;
-        private readonly TimeSpan rotationInterval;
+        private readonly ManualLogSource _logger;
+        private readonly string _exportDirectory;
+        private readonly string _baseDirectory;
+        private readonly ExportFormat _format;
+        private readonly long _maxFileSizeBytes;
+        private readonly TimeSpan _rotationInterval;
 
-        private StreamWriter currentCsvWriter;
-        private StreamWriter currentNdjsonWriter;
-        private string currentCsvPath;
-        private string currentNdjsonPath;
-        private DateTime lastRotationTime;
-        private long currentCsvSize;
-        private long currentNdjsonSize;
-        private readonly object fileLock = new object();
-        private bool csvHeaderWritten = false;
-        private Timer rotationTimer;
+        private StreamWriter _currentCsvWriter;
+        private StreamWriter _currentNdjsonWriter;
+        private string _currentCsvPath;
+        private string _currentNdjsonPath;
+        private DateTime _lastRotationTime;
+        private long _currentCsvSize;
+        private long _currentNdjsonSize;
+        private readonly ReaderWriterLockSlim _fileLock;
+        private bool _csvHeaderWritten;
+        private Timer _rotationTimer;
+        private bool _disposed;
+        private readonly SemaphoreSlim _writeSemaphore;
 
         public FileExporter(string directory, ExportFormat format, int maxSizeMB, int rotationMinutes)
         {
-            this.format = format;
-            this.maxFileSizeBytes = maxSizeMB * 1024 * 1024;
-            this.rotationInterval = TimeSpan.FromMinutes(rotationMinutes);
+            _logger = DataExportBusPlugin.ModLogger;
+            _format = format;
+            _fileLock = new ReaderWriterLockSlim(LockRecursionPolicy.NoRecursion);
+            _writeSemaphore = new SemaphoreSlim(1, 1);
+            _disposed = false;
 
-            // Create export directory
-            if (!Path.IsPathRooted(directory))
+            // Validate and sanitize inputs
+            maxSizeMB = SecurityValidator.ValidateConfigValue(maxSizeMB,
+                HKSS.DataExportBus.Configuration.Constants.FileExport.MIN_ROTATION_SIZE_MB,
+                HKSS.DataExportBus.Configuration.Constants.FileExport.MAX_ROTATION_SIZE_MB);
+            rotationMinutes = SecurityValidator.ValidateConfigValue(rotationMinutes,
+                HKSS.DataExportBus.Configuration.Constants.FileExport.MIN_ROTATION_MINUTES,
+                HKSS.DataExportBus.Configuration.Constants.FileExport.MAX_ROTATION_MINUTES);
+
+            _maxFileSizeBytes = maxSizeMB * 1024 * 1024;
+            _rotationInterval = TimeSpan.FromMinutes(rotationMinutes);
+
+            // Validate and create export directory with security checks
+            try
             {
-                directory = Path.Combine(Directory.GetCurrentDirectory(), directory);
-            }
-            this.exportDirectory = directory;
+                _baseDirectory = Directory.GetCurrentDirectory();
+                _exportDirectory = SecurityValidator.ValidateAndSanitizePath(directory, _baseDirectory);
 
-            if (!Directory.Exists(exportDirectory))
+                if (!Directory.Exists(_exportDirectory))
+                {
+                    Directory.CreateDirectory(_exportDirectory);
+                    _logger?.LogInfo($"Created export directory: {_exportDirectory}");
+                }
+
+                InitializeFiles();
+
+                // Setup rotation timer with error handling
+                _rotationTimer = new Timer(
+                    callback: SafeCheckRotation,
+                    state: null,
+                    dueTime: TimeSpan.FromMinutes(HKSS.DataExportBus.Configuration.Constants.Timers.FILE_ROTATION_CHECK_INTERVAL_MINUTES),
+                    period: TimeSpan.FromMinutes(HKSS.DataExportBus.Configuration.Constants.Timers.FILE_ROTATION_CHECK_INTERVAL_MINUTES)
+                );
+            }
+            catch (Exception ex)
             {
-                Directory.CreateDirectory(exportDirectory);
-                DataExportBusPlugin.ModLogger?.LogInfo($"Created export directory: {exportDirectory}");
+                _logger?.LogError($"Failed to initialize FileExporter: {ex}");
+                throw;
             }
-
-            InitializeFiles();
-
-            // Setup rotation timer
-            rotationTimer = new Timer(CheckRotation, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
         }
 
         private void InitializeFiles()
         {
-            lock (fileLock)
+            _fileLock.EnterWriteLock();
+            try
             {
-                lastRotationTime = DateTime.UtcNow;
-                string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+                // Close existing writers safely
+                CloseWriters();
+
+                _lastRotationTime = DateTime.UtcNow;
+                string timestamp = DateTime.UtcNow.ToString(HKSS.DataExportBus.Configuration.Constants.FileExport.TIMESTAMP_FORMAT);
 
                 // Initialize CSV file
-                if (format == ExportFormat.CSV || format == ExportFormat.Both)
+                if (_format == ExportFormat.CSV || _format == ExportFormat.Both)
                 {
-                    currentCsvPath = Path.Combine(exportDirectory, $"metrics_{timestamp}.csv");
-                    currentCsvWriter = new StreamWriter(currentCsvPath, false, Encoding.UTF8) { AutoFlush = true };
-                    csvHeaderWritten = false;
-                    currentCsvSize = 0;
-                    DataExportBusPlugin.ModLogger?.LogInfo($"Created CSV file: {currentCsvPath}");
+                    try
+                    {
+                        string csvFileName = SecurityValidator.ValidateFileName($"metrics_{timestamp}{HKSS.DataExportBus.Configuration.Constants.FileExport.CSV_EXTENSION}");
+                        _currentCsvPath = Path.Combine(_exportDirectory, csvFileName);
+                        _currentCsvWriter = new StreamWriter(_currentCsvPath, false, Encoding.UTF8)
+                        {
+                            AutoFlush = true
+                        };
+                        _csvHeaderWritten = false;
+                        _currentCsvSize = 0;
+                        _logger?.LogInfo($"Created CSV file: {_currentCsvPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogError($"Failed to create CSV file: {ex}");
+                    }
                 }
 
                 // Initialize NDJSON file
-                if (format == ExportFormat.NDJSON || format == ExportFormat.Both)
+                if (_format == ExportFormat.NDJSON || _format == ExportFormat.Both)
                 {
-                    currentNdjsonPath = Path.Combine(exportDirectory, $"metrics_{timestamp}.ndjson");
-                    currentNdjsonWriter = new StreamWriter(currentNdjsonPath, false, Encoding.UTF8) { AutoFlush = true };
-                    currentNdjsonSize = 0;
-                    DataExportBusPlugin.ModLogger?.LogInfo($"Created NDJSON file: {currentNdjsonPath}");
+                    try
+                    {
+                        string ndjsonFileName = SecurityValidator.ValidateFileName($"metrics_{timestamp}{HKSS.DataExportBus.Configuration.Constants.FileExport.NDJSON_EXTENSION}");
+                        _currentNdjsonPath = Path.Combine(_exportDirectory, ndjsonFileName);
+                        _currentNdjsonWriter = new StreamWriter(_currentNdjsonPath, false, Encoding.UTF8)
+                        {
+                            AutoFlush = true
+                        };
+                        _currentNdjsonSize = 0;
+                        _logger?.LogInfo($"Created NDJSON file: {_currentNdjsonPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogError($"Failed to create NDJSON file: {ex}");
+                    }
                 }
+            }
+            finally
+            {
+                _fileLock.ExitWriteLock();
             }
         }
 
-        public void WriteMetric(GameMetric metric)
+        private void CloseWriters()
         {
-            lock (fileLock)
+            try
             {
+                _currentCsvWriter?.Flush();
+                _currentCsvWriter?.Close();
+                _currentCsvWriter?.Dispose();
+                _currentCsvWriter = null;
+
+                _currentNdjsonWriter?.Flush();
+                _currentNdjsonWriter?.Close();
+                _currentNdjsonWriter?.Dispose();
+                _currentNdjsonWriter = null;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Error closing writers: {ex}");
+            }
+        }
+
+        public async Task WriteMetricAsync(GameMetric metric)
+        {
+            if (_disposed)
+                return;
+
+            if (metric == null)
+            {
+                _logger?.LogWarning("Attempted to write null metric");
+                return;
+            }
+
+            await _writeSemaphore.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                _fileLock.EnterWriteLock();
                 try
                 {
                     // Write to CSV
-                    if (currentCsvWriter != null)
+                    if (_currentCsvWriter != null)
                     {
-                        WriteCsv(metric);
+                        await WriteCsvAsync(metric).ConfigureAwait(false);
                     }
 
                     // Write to NDJSON
-                    if (currentNdjsonWriter != null)
+                    if (_currentNdjsonWriter != null)
                     {
-                        WriteNdjson(metric);
+                        await WriteNdjsonAsync(metric).ConfigureAwait(false);
                     }
 
                     // Check if rotation is needed
                     CheckFileSize();
                 }
-                catch (Exception ex)
+                finally
                 {
-                    DataExportBusPlugin.ModLogger?.LogError($"Error writing metric to file: {ex}");
+                    _fileLock.ExitWriteLock();
                 }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Error writing metric to file: {ex}");
+            }
+            finally
+            {
+                _writeSemaphore.Release();
             }
         }
 
-        private void WriteCsv(GameMetric metric)
+        public void WriteMetric(GameMetric metric)
+        {
+            // Synchronous wrapper for backward compatibility
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await WriteMetricAsync(metric).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError($"Error writing metric: {ex}");
+                }
+            });
+        }
+
+        private async Task WriteCsvAsync(GameMetric metric)
         {
             // Flatten the metric data for CSV
             var row = new List<string>
@@ -118,24 +232,36 @@ namespace HKSS.DataExportBus
             };
 
             // Write header if needed
-            if (!csvHeaderWritten)
+            if (!_csvHeaderWritten)
             {
                 var headers = new List<string> { "Timestamp", "EventType" };
 
-                // Add headers for all possible data fields
-                var commonFields = new[] { "position_x", "position_y", "health_current", "health_max",
-                                          "soul_current", "soul_max", "damage", "enemy_name", "scene_name",
-                                          "item_name", "ability_name", "boss_name", "session_time" };
+                // Add headers for all possible data fields using constants
+                var commonFields = new[] {
+                    HKSS.DataExportBus.Configuration.Constants.MetricFields.POSITION_X, HKSS.DataExportBus.Configuration.Constants.MetricFields.POSITION_Y,
+                    HKSS.DataExportBus.Configuration.Constants.MetricFields.HEALTH_CURRENT, HKSS.DataExportBus.Configuration.Constants.MetricFields.HEALTH_MAX,
+                    HKSS.DataExportBus.Configuration.Constants.MetricFields.SOUL_CURRENT, HKSS.DataExportBus.Configuration.Constants.MetricFields.SOUL_MAX,
+                    HKSS.DataExportBus.Configuration.Constants.MetricFields.DAMAGE, HKSS.DataExportBus.Configuration.Constants.MetricFields.ENEMY_NAME,
+                    HKSS.DataExportBus.Configuration.Constants.MetricFields.SCENE_NAME, HKSS.DataExportBus.Configuration.Constants.MetricFields.ITEM_NAME,
+                    HKSS.DataExportBus.Configuration.Constants.MetricFields.ABILITY_NAME, HKSS.DataExportBus.Configuration.Constants.MetricFields.BOSS_NAME,
+                    HKSS.DataExportBus.Configuration.Constants.MetricFields.SESSION_TIME
+                };
 
                 headers.AddRange(commonFields);
-                currentCsvWriter.WriteLine(string.Join(",", headers));
-                csvHeaderWritten = true;
+                await _currentCsvWriter.WriteLineAsync(string.Join(",", headers)).ConfigureAwait(false);
+                _csvHeaderWritten = true;
             }
 
-            // Add data values
-            var dataFields = new[] { "position_x", "position_y", "health_current", "health_max",
-                                      "soul_current", "soul_max", "damage", "enemy_name", "scene_name",
-                                      "item_name", "ability_name", "boss_name", "session_time" };
+            // Add data values using constants
+            var dataFields = new[] {
+                HKSS.DataExportBus.Configuration.Constants.MetricFields.POSITION_X, HKSS.DataExportBus.Configuration.Constants.MetricFields.POSITION_Y,
+                HKSS.DataExportBus.Configuration.Constants.MetricFields.HEALTH_CURRENT, HKSS.DataExportBus.Configuration.Constants.MetricFields.HEALTH_MAX,
+                HKSS.DataExportBus.Configuration.Constants.MetricFields.SOUL_CURRENT, HKSS.DataExportBus.Configuration.Constants.MetricFields.SOUL_MAX,
+                HKSS.DataExportBus.Configuration.Constants.MetricFields.DAMAGE, HKSS.DataExportBus.Configuration.Constants.MetricFields.ENEMY_NAME,
+                HKSS.DataExportBus.Configuration.Constants.MetricFields.SCENE_NAME, HKSS.DataExportBus.Configuration.Constants.MetricFields.ITEM_NAME,
+                HKSS.DataExportBus.Configuration.Constants.MetricFields.ABILITY_NAME, HKSS.DataExportBus.Configuration.Constants.MetricFields.BOSS_NAME,
+                HKSS.DataExportBus.Configuration.Constants.MetricFields.SESSION_TIME
+            };
 
             foreach (var field in dataFields)
             {
@@ -151,11 +277,11 @@ namespace HKSS.DataExportBus
             }
 
             string csvLine = string.Join(",", row);
-            currentCsvWriter.WriteLine(csvLine);
-            currentCsvSize += Encoding.UTF8.GetByteCount(csvLine) + 2; // +2 for \r\n
+            await _currentCsvWriter.WriteLineAsync(csvLine).ConfigureAwait(false);
+            _currentCsvSize += Encoding.UTF8.GetByteCount(csvLine) + Environment.NewLine.Length;
         }
 
-        private void WriteNdjson(GameMetric metric)
+        private async Task WriteNdjsonAsync(GameMetric metric)
         {
             // Create a clean object for NDJSON
             var jsonObject = new
@@ -166,8 +292,8 @@ namespace HKSS.DataExportBus
             };
 
             string json = JsonConvert.SerializeObject(jsonObject, Formatting.None);
-            currentNdjsonWriter.WriteLine(json);
-            currentNdjsonSize += Encoding.UTF8.GetByteCount(json) + 1; // +1 for \n
+            await _currentNdjsonWriter.WriteLineAsync(json).ConfigureAwait(false);
+            _currentNdjsonSize += Encoding.UTF8.GetByteCount(json) + 1;
         }
 
         private void CheckFileSize()
@@ -175,16 +301,16 @@ namespace HKSS.DataExportBus
             bool shouldRotate = false;
 
             // Check CSV size
-            if (currentCsvWriter != null && currentCsvSize >= maxFileSizeBytes)
+            if (_currentCsvWriter != null && _currentCsvSize >= _maxFileSizeBytes)
             {
-                DataExportBusPlugin.ModLogger?.LogInfo($"CSV file size exceeded {maxFileSizeBytes} bytes, rotating...");
+                _logger?.LogInfo($"CSV file size exceeded {_maxFileSizeBytes} bytes, rotating...");
                 shouldRotate = true;
             }
 
             // Check NDJSON size
-            if (currentNdjsonWriter != null && currentNdjsonSize >= maxFileSizeBytes)
+            if (_currentNdjsonWriter != null && _currentNdjsonSize >= _maxFileSizeBytes)
             {
-                DataExportBusPlugin.ModLogger?.LogInfo($"NDJSON file size exceeded {maxFileSizeBytes} bytes, rotating...");
+                _logger?.LogInfo($"NDJSON file size exceeded {_maxFileSizeBytes} bytes, rotating...");
                 shouldRotate = true;
             }
 
@@ -194,38 +320,54 @@ namespace HKSS.DataExportBus
             }
         }
 
-        private void CheckRotation(object state)
+        private void SafeCheckRotation(object state)
         {
-            lock (fileLock)
+            try
             {
-                if (DateTime.UtcNow - lastRotationTime >= rotationInterval)
+                if (_disposed)
+                    return;
+
+                _fileLock.EnterUpgradeableReadLock();
+                try
                 {
-                    DataExportBusPlugin.ModLogger?.LogInfo($"Rotation interval reached ({rotationInterval}), rotating files...");
-                    RotateFiles();
+                    if (DateTime.UtcNow - _lastRotationTime >= _rotationInterval)
+                    {
+                        _logger?.LogInfo($"Rotation interval reached ({_rotationInterval}), rotating files...");
+                        RotateFiles();
+                    }
                 }
+                finally
+                {
+                    _fileLock.ExitUpgradeableReadLock();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Error in rotation timer: {ex}");
             }
         }
 
         private void RotateFiles()
         {
-            lock (fileLock)
+            if (_disposed)
+                return;
+
+            _fileLock.EnterWriteLock();
+            try
             {
-                try
-                {
-                    // Close current files
-                    currentCsvWriter?.Close();
-                    currentNdjsonWriter?.Close();
+                // Archive old files
+                ArchiveFiles();
 
-                    // Archive old files
-                    ArchiveFiles();
-
-                    // Initialize new files
-                    InitializeFiles();
-                }
-                catch (Exception ex)
-                {
-                    DataExportBusPlugin.ModLogger?.LogError($"Error rotating files: {ex}");
-                }
+                // Initialize new files
+                InitializeFiles();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Error rotating files: {ex}");
+            }
+            finally
+            {
+                _fileLock.ExitWriteLock();
             }
         }
 
@@ -233,49 +375,72 @@ namespace HKSS.DataExportBus
         {
             try
             {
-                // Create archive directory if needed
-                string archiveDir = Path.Combine(exportDirectory, "archive");
+                // Create archive directory if needed with validation
+                string archiveDir = SecurityValidator.ValidateAndSanitizePath(
+                    HKSS.DataExportBus.Configuration.Constants.FileExport.ARCHIVE_DIRECTORY_NAME,
+                    _exportDirectory);
+
                 if (!Directory.Exists(archiveDir))
                 {
                     Directory.CreateDirectory(archiveDir);
                 }
 
                 // Move completed files to archive
-                if (!string.IsNullOrEmpty(currentCsvPath) && File.Exists(currentCsvPath))
+                if (!string.IsNullOrEmpty(_currentCsvPath) && File.Exists(_currentCsvPath))
                 {
-                    string archivePath = Path.Combine(archiveDir, Path.GetFileName(currentCsvPath));
-                    File.Move(currentCsvPath, archivePath);
-                    DataExportBusPlugin.ModLogger?.LogInfo($"Archived CSV: {archivePath}");
+                    try
+                    {
+                        string fileName = Path.GetFileName(_currentCsvPath);
+                        string archivePath = Path.Combine(archiveDir, fileName);
 
-                    // Optionally compress archived files
-                    CompressFile(archivePath);
+                        // Handle existing file
+                        if (File.Exists(archivePath))
+                        {
+                            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
+                            archivePath = Path.Combine(archiveDir, $"{Path.GetFileNameWithoutExtension(fileName)}_{timestamp}{Path.GetExtension(fileName)}");
+                        }
+
+                        File.Move(_currentCsvPath, archivePath);
+                        _logger?.LogInfo($"Archived CSV: {archivePath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogError($"Failed to archive CSV file: {ex}");
+                    }
                 }
 
-                if (!string.IsNullOrEmpty(currentNdjsonPath) && File.Exists(currentNdjsonPath))
+                if (!string.IsNullOrEmpty(_currentNdjsonPath) && File.Exists(_currentNdjsonPath))
                 {
-                    string archivePath = Path.Combine(archiveDir, Path.GetFileName(currentNdjsonPath));
-                    File.Move(currentNdjsonPath, archivePath);
-                    DataExportBusPlugin.ModLogger?.LogInfo($"Archived NDJSON: {archivePath}");
+                    try
+                    {
+                        string fileName = Path.GetFileName(_currentNdjsonPath);
+                        string archivePath = Path.Combine(archiveDir, fileName);
 
-                    // Optionally compress archived files
-                    CompressFile(archivePath);
+                        // Handle existing file
+                        if (File.Exists(archivePath))
+                        {
+                            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
+                            archivePath = Path.Combine(archiveDir, $"{Path.GetFileNameWithoutExtension(fileName)}_{timestamp}{Path.GetExtension(fileName)}");
+                        }
+
+                        File.Move(_currentNdjsonPath, archivePath);
+                        _logger?.LogInfo($"Archived NDJSON: {archivePath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogError($"Failed to archive NDJSON file: {ex}");
+                    }
                 }
 
-                // Clean up old archives (keep last 10 files)
+                // Clean up old archives
                 CleanupOldArchives(archiveDir);
             }
             catch (Exception ex)
             {
-                DataExportBusPlugin.ModLogger?.LogError($"Error archiving files: {ex}");
+                _logger?.LogError($"Error archiving files: {ex}");
             }
         }
 
-        private void CompressFile(string filePath)
-        {
-            // Note: System.IO.Compression might not be available in Unity
-            // This is a placeholder for compression logic
-            // In a real implementation, you might use a Unity-compatible compression library
-        }
 
         private void CleanupOldArchives(string archiveDir)
         {
@@ -284,67 +449,102 @@ namespace HKSS.DataExportBus
                 var files = Directory.GetFiles(archiveDir)
                     .Select(f => new FileInfo(f))
                     .OrderByDescending(f => f.CreationTimeUtc)
-                    .Skip(10)
+                    .Skip(HKSS.DataExportBus.Configuration.Constants.FileExport.MAX_ARCHIVE_FILES)
                     .ToList();
 
                 foreach (var file in files)
                 {
                     file.Delete();
-                    DataExportBusPlugin.ModLogger?.LogInfo($"Deleted old archive: {file.Name}");
+                    _logger?.LogInfo($"Deleted old archive: {file.Name}");
                 }
             }
             catch (Exception ex)
             {
-                DataExportBusPlugin.ModLogger?.LogError($"Error cleaning up archives: {ex}");
+                _logger?.LogError($"Error cleaning up archives: {ex}");
             }
         }
 
         public string GetCurrentCsvPath()
         {
-            lock (fileLock)
+            _fileLock.EnterReadLock();
+            try
             {
-                return currentCsvPath;
+                return _currentCsvPath;
+            }
+            finally
+            {
+                _fileLock.ExitReadLock();
             }
         }
 
         public string GetCurrentNdjsonPath()
         {
-            lock (fileLock)
+            _fileLock.EnterReadLock();
+            try
             {
-                return currentNdjsonPath;
+                return _currentNdjsonPath;
+            }
+            finally
+            {
+                _fileLock.ExitReadLock();
             }
         }
 
         public Dictionary<string, object> GetStatistics()
         {
-            lock (fileLock)
+            _fileLock.EnterReadLock();
+            try
             {
                 return new Dictionary<string, object>
                 {
-                    ["export_directory"] = exportDirectory,
-                    ["format"] = format.ToString(),
-                    ["current_csv_file"] = currentCsvPath,
-                    ["current_csv_size"] = currentCsvSize,
-                    ["current_ndjson_file"] = currentNdjsonPath,
-                    ["current_ndjson_size"] = currentNdjsonSize,
-                    ["last_rotation"] = lastRotationTime.ToString("o"),
-                    ["next_rotation"] = (lastRotationTime + rotationInterval).ToString("o"),
-                    ["max_file_size_mb"] = maxFileSizeBytes / (1024 * 1024),
-                    ["rotation_interval_minutes"] = rotationInterval.TotalMinutes
+                    ["export_directory"] = _exportDirectory,
+                    ["format"] = _format.ToString(),
+                    ["current_csv_file"] = _currentCsvPath,
+                    ["current_csv_size"] = _currentCsvSize,
+                    ["current_ndjson_file"] = _currentNdjsonPath,
+                    ["current_ndjson_size"] = _currentNdjsonSize,
+                    ["last_rotation"] = _lastRotationTime.ToString(HKSS.DataExportBus.Configuration.Constants.FileExport.ISO_DATETIME_FORMAT),
+                    ["next_rotation"] = (_lastRotationTime + _rotationInterval).ToString(HKSS.DataExportBus.Configuration.Constants.FileExport.ISO_DATETIME_FORMAT),
+                    ["max_file_size_mb"] = _maxFileSizeBytes / (1024 * 1024),
+                    ["rotation_interval_minutes"] = _rotationInterval.TotalMinutes
                 };
+            }
+            finally
+            {
+                _fileLock.ExitReadLock();
             }
         }
 
         public void Dispose()
         {
-            lock (fileLock)
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
             {
-                rotationTimer?.Dispose();
-                currentCsvWriter?.Close();
-                currentNdjsonWriter?.Close();
-                currentCsvWriter?.Dispose();
-                currentNdjsonWriter?.Dispose();
+                _rotationTimer?.Dispose();
+
+                _fileLock?.EnterWriteLock();
+                try
+                {
+                    CloseWriters();
+                }
+                finally
+                {
+                    _fileLock?.ExitWriteLock();
+                    _fileLock?.Dispose();
+                }
+
+                _writeSemaphore?.Dispose();
             }
+
+            _disposed = true;
         }
 
         private string EscapeCsvValue(string value)

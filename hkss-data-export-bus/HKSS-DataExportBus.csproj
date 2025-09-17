@@ -29,4 +29,8 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\dashboard.html" />
+  </ItemGroup>
+
 </Project>

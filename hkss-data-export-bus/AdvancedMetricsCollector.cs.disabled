@@ -1,0 +1,706 @@
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using BepInEx;
+using BepInEx.Bootstrap;
+using HarmonyLib;
+
+namespace HKSS.DataExportBus
+{
+    /// <summary>
+    /// Advanced metrics collector that captures comprehensive game, engine, and system state
+    /// </summary>
+    public class AdvancedMetricsCollector : MonoBehaviour
+    {
+        private HeroController heroController;
+        private PlayerData playerData;
+        private GameManager gameManager;
+        private CameraController cameraController;
+        private float lastAdvancedUpdateTime = 0f;
+        private float advancedUpdateInterval = 0.5f; // Update advanced metrics every 500ms
+
+        // Cached references for performance
+        private Camera mainCamera;
+        private AudioListener audioListener;
+        private Dictionary<string, object> lastFrameState = new Dictionary<string, object>();
+        private List<string> activeAbilities = new List<string>();
+        private Dictionary<string, bool> lastInputState = new Dictionary<string, bool>();
+
+        void Start()
+        {
+            DataExportBusPlugin.ModLogger?.LogInfo("AdvancedMetricsCollector started");
+            mainCamera = Camera.main;
+            audioListener = FindObjectOfType<AudioListener>();
+
+            // Try to find game manager
+            gameManager = GameManager.instance;
+
+            // Start coroutine for expensive operations
+            StartCoroutine(CollectExpensiveMetrics());
+        }
+
+        void Update()
+        {
+            if (Time.time - lastAdvancedUpdateTime >= advancedUpdateInterval)
+            {
+                CollectAdvancedMetrics();
+                lastAdvancedUpdateTime = Time.time;
+            }
+        }
+
+        private void CollectAdvancedMetrics()
+        {
+            try
+            {
+                // Initialize references if needed
+                if (heroController == null)
+                {
+                    heroController = HeroController.instance;
+                    if (heroController == null) return;
+                }
+
+                if (playerData == null)
+                {
+                    playerData = PlayerData.instance;
+                }
+
+                if (cameraController == null)
+                {
+                    cameraController = FindObjectOfType<CameraController>();
+                }
+
+                var plugin = DataExportBusPlugin.Instance;
+
+                // Collect Unity Engine Metrics
+                CollectUnityEngineMetrics();
+
+                // Collect Detailed Player State
+                CollectDetailedPlayerState();
+
+                // Collect Scene and Environment Data
+                CollectSceneEnvironmentData();
+
+                // Collect Input and Control State
+                CollectInputState();
+
+                // Collect UI State
+                CollectUIState();
+
+                // Collect Audio State
+                CollectAudioState();
+
+                // Collect Physics State
+                CollectPhysicsState();
+
+                // Collect BepInEx Plugin Information
+                CollectPluginInformation();
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error collecting advanced metrics: {ex}");
+            }
+        }
+
+        private void CollectUnityEngineMetrics()
+        {
+            var metric = new GameMetric("unity_engine_metrics");
+
+            // Performance metrics
+            metric.Data["delta_time"] = Time.deltaTime;
+            metric.Data["unscaled_delta_time"] = Time.unscaledDeltaTime;
+            metric.Data["fixed_delta_time"] = Time.fixedDeltaTime;
+            metric.Data["time_scale"] = Time.timeScale;
+            metric.Data["realtime_since_startup"] = Time.realtimeSinceStartup;
+            metric.Data["smooth_delta_time"] = Time.smoothDeltaTime;
+            metric.Data["capture_framerate"] = Time.captureFramerate;
+            metric.Data["maximum_delta_time"] = Time.maximumDeltaTime;
+
+            // Rendering metrics
+            metric.Data["target_frame_rate"] = Application.targetFrameRate;
+            metric.Data["vsync_count"] = QualitySettings.vSyncCount;
+            metric.Data["quality_level"] = QualitySettings.GetQualityLevel();
+            metric.Data["active_color_space"] = QualitySettings.activeColorSpace.ToString();
+            metric.Data["anisotropic_filtering"] = QualitySettings.anisotropicFiltering.ToString();
+            metric.Data["antialiasing"] = QualitySettings.antiAliasing;
+            metric.Data["pixel_light_count"] = QualitySettings.pixelLightCount;
+            metric.Data["shadow_resolution"] = QualitySettings.shadowResolution.ToString();
+            metric.Data["shadow_distance"] = QualitySettings.shadowDistance;
+
+            // Memory metrics
+            metric.Data["total_allocated_memory_mb"] = (UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / 1048576f);
+            metric.Data["total_reserved_memory_mb"] = (UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / 1048576f);
+            metric.Data["total_unused_reserved_memory_mb"] = (UnityEngine.Profiling.Profiler.GetTotalUnusedReservedMemoryLong() / 1048576f);
+            metric.Data["mono_heap_size_mb"] = (UnityEngine.Profiling.Profiler.GetMonoHeapSizeLong() / 1048576f);
+            metric.Data["mono_used_size_mb"] = (UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong() / 1048576f);
+
+            // Application info
+            metric.Data["unity_version"] = Application.unityVersion;
+            metric.Data["platform"] = Application.platform.ToString();
+            metric.Data["system_language"] = Application.systemLanguage.ToString();
+            metric.Data["is_focused"] = Application.isFocused;
+            metric.Data["is_playing"] = Application.isPlaying;
+            metric.Data["run_in_background"] = Application.runInBackground;
+            metric.Data["genuine"] = Application.genuine;
+            metric.Data["genuine_check_available"] = Application.genuineCheckAvailable;
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectDetailedPlayerState()
+        {
+            if (heroController == null) return;
+
+            var metric = new GameMetric("player_state_detailed");
+
+            // Hero controller state flags
+            var cState = heroController.cState;
+            metric.Data["on_ground"] = cState.onGround;
+            metric.Data["attacking"] = cState.attacking;
+            metric.Data["bouncing"] = cState.bouncing;
+            metric.Data["dashing"] = cState.dashing;
+            metric.Data["back_dashing"] = cState.backDashing;
+            metric.Data["down_thrust"] = cState.downThrusting;
+            metric.Data["double_jumping"] = cState.doubleJumping;
+            metric.Data["face_right"] = cState.facingRight;
+            metric.Data["falling"] = cState.falling;
+            metric.Data["has_dash"] = cState.hasDash;
+            metric.Data["hero_jumping"] = cState.heroJumping;
+            metric.Data["hurt_frozen"] = cState.hurtFrozen;
+            metric.Data["invulnerable"] = cState.invulnerable;
+            metric.Data["jumping"] = cState.jumping;
+            metric.Data["nail_charging"] = cState.nailCharging;
+            metric.Data["near_bench"] = cState.nearBench;
+            metric.Data["on_conveyor_h"] = cState.onConveyorH;
+            metric.Data["on_conveyor_v"] = cState.onConveyorV;
+            metric.Data["recoiling"] = cState.recoiling;
+            metric.Data["recoil_frozen"] = cState.recoilFrozen;
+            metric.Data["shrinking"] = cState.shrinking;
+            metric.Data["swimming"] = cState.swimming;
+            metric.Data["touching_wall"] = cState.touchingWall;
+            metric.Data["transition"] = cState.transitioning;
+            metric.Data["wall_jumping"] = cState.wallJumping;
+            metric.Data["wall_sliding"] = cState.wallSliding;
+            metric.Data["was_on_ground"] = cState.wasOnGround;
+            metric.Data["will_hard_land"] = cState.willHardLand;
+
+            // Animation state
+            var animator = heroController.GetComponent<Animator>();
+            if (animator != null)
+            {
+                metric.Data["animation_speed"] = animator.speed;
+                metric.Data["is_human"] = animator.isHuman;
+                metric.Data["layer_count"] = animator.layerCount;
+
+                // Get current animation state
+                var currentAnimatorState = animator.GetCurrentAnimatorStateInfo(0);
+                metric.Data["current_animation_hash"] = currentAnimatorState.shortNameHash;
+                metric.Data["animation_normalized_time"] = currentAnimatorState.normalizedTime;
+                metric.Data["animation_length"] = currentAnimatorState.length;
+                metric.Data["animation_speed_multiplier"] = currentAnimatorState.speedMultiplier;
+                metric.Data["animation_loop"] = currentAnimatorState.loop;
+            }
+
+            // Movement and physics
+            var rb2d = heroController.GetComponent<Rigidbody2D>();
+            if (rb2d != null)
+            {
+                metric.Data["mass"] = rb2d.mass;
+                metric.Data["drag"] = rb2d.drag;
+                metric.Data["angular_drag"] = rb2d.angularDrag;
+                metric.Data["gravity_scale"] = rb2d.gravityScale;
+                metric.Data["is_kinematic"] = rb2d.isKinematic;
+                metric.Data["angular_velocity"] = rb2d.angularVelocity;
+                metric.Data["inertia"] = rb2d.inertia;
+                metric.Data["velocity_magnitude"] = rb2d.linearVelocity.magnitude;
+            }
+
+            // Collider information
+            var collider = heroController.GetComponent<Collider2D>();
+            if (collider != null)
+            {
+                metric.Data["collider_enabled"] = collider.enabled;
+                metric.Data["collider_bounds_center"] = new { x = collider.bounds.center.x, y = collider.bounds.center.y };
+                metric.Data["collider_bounds_size"] = new { x = collider.bounds.size.x, y = collider.bounds.size.y };
+                metric.Data["is_trigger"] = collider.isTrigger;
+            }
+
+            // Player data progression
+            if (playerData != null)
+            {
+                metric.Data["geo"] = playerData.geo;
+                metric.Data["play_time"] = playerData.playTime;
+                metric.Data["deaths"] = playerData.deaths;
+                metric.Data["completion_percentage"] = playerData.completionPercentage;
+                metric.Data["has_dream_nail"] = playerData.hasDreamNail;
+                metric.Data["has_lantern"] = playerData.hasLantern;
+                metric.Data["has_map"] = playerData.hasMap;
+                metric.Data["has_quill"] = playerData.hasQuill;
+                metric.Data["nail_damage"] = playerData.nailDamage;
+                metric.Data["beam_damage"] = playerData.beamDamage;
+                metric.Data["blue_health"] = playerData.healthBlue;
+                metric.Data["max_health_base"] = playerData.maxHealthBase;
+                metric.Data["soul_limited"] = playerData.soulLimited;
+            }
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectSceneEnvironmentData()
+        {
+            var metric = new GameMetric("scene_environment");
+
+            // Scene information
+            var scene = SceneManager.GetActiveScene();
+            metric.Data["scene_name"] = scene.name;
+            metric.Data["scene_path"] = scene.path;
+            metric.Data["scene_build_index"] = scene.buildIndex;
+            metric.Data["scene_is_dirty"] = scene.isDirty;
+            metric.Data["scene_is_loaded"] = scene.isLoaded;
+            metric.Data["scene_root_count"] = scene.rootCount;
+            metric.Data["loaded_scene_count"] = SceneManager.sceneCount;
+
+            // Camera information
+            if (mainCamera != null)
+            {
+                metric.Data["camera_position"] = new { x = mainCamera.transform.position.x, y = mainCamera.transform.position.y, z = mainCamera.transform.position.z };
+                metric.Data["camera_rotation"] = new { x = mainCamera.transform.rotation.eulerAngles.x, y = mainCamera.transform.rotation.eulerAngles.y, z = mainCamera.transform.rotation.eulerAngles.z };
+                metric.Data["camera_field_of_view"] = mainCamera.fieldOfView;
+                metric.Data["camera_orthographic"] = mainCamera.orthographic;
+                metric.Data["camera_orthographic_size"] = mainCamera.orthographicSize;
+                metric.Data["camera_near_clip"] = mainCamera.nearClipPlane;
+                metric.Data["camera_far_clip"] = mainCamera.farClipPlane;
+                metric.Data["camera_depth"] = mainCamera.depth;
+                metric.Data["camera_aspect_ratio"] = mainCamera.aspect;
+                metric.Data["camera_rect"] = new { x = mainCamera.rect.x, y = mainCamera.rect.y, width = mainCamera.rect.width, height = mainCamera.rect.height };
+            }
+
+            // Camera controller state (if available)
+            if (cameraController != null)
+            {
+                var ccType = cameraController.GetType();
+                var modeField = ccType.GetField("mode", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (modeField != null)
+                {
+                    metric.Data["camera_mode"] = modeField.GetValue(cameraController)?.ToString() ?? "unknown";
+                }
+            }
+
+            // Lighting information
+            metric.Data["ambient_intensity"] = RenderSettings.ambientIntensity;
+            metric.Data["ambient_light_color"] = ColorToString(RenderSettings.ambientLight);
+            metric.Data["fog_enabled"] = RenderSettings.fog;
+            metric.Data["fog_color"] = ColorToString(RenderSettings.fogColor);
+            metric.Data["fog_density"] = RenderSettings.fogDensity;
+            metric.Data["fog_mode"] = RenderSettings.fogMode.ToString();
+
+            // Count game objects by tag
+            var tagCounts = new Dictionary<string, int>();
+            foreach (var tag in UnityEditorInternal.InternalEditorUtility.tags)
+            {
+                var objects = GameObject.FindGameObjectsWithTag(tag);
+                if (objects.Length > 0)
+                {
+                    tagCounts[tag] = objects.Length;
+                }
+            }
+            metric.Data["game_object_counts_by_tag"] = tagCounts;
+
+            // Count active enemies
+            var enemies = GameObject.FindObjectsOfType<HealthManager>()
+                .Where(hm => hm.gameObject != heroController?.gameObject)
+                .ToList();
+            metric.Data["active_enemy_count"] = enemies.Count;
+            metric.Data["active_enemies"] = enemies.Take(10).Select(e => new
+            {
+                name = e.gameObject.name,
+                hp = e.hp,
+                position = new { x = e.transform.position.x, y = e.transform.position.y }
+            }).ToList();
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectInputState()
+        {
+            if (heroController == null) return;
+
+            var metric = new GameMetric("input_state");
+
+            // Get current input state through reflection
+            var inputHandler = heroController.inputHandler;
+            if (inputHandler != null)
+            {
+                var ihType = inputHandler.GetType();
+
+                // Try to get input states via reflection
+                var inputFields = new string[]
+                {
+                    "inputX", "inputY", "leftPressed", "rightPressed", "upPressed", "downPressed",
+                    "jumpPressed", "jumpReleased", "attackPressed", "dashPressed", "dashReleased",
+                    "castPressed", "quickMapPressed", "quickCastPressed", "inventoryPressed"
+                };
+
+                foreach (var fieldName in inputFields)
+                {
+                    var field = ihType.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (field != null)
+                    {
+                        var value = field.GetValue(inputHandler);
+                        metric.Data[fieldName] = value;
+
+                        // Track state changes
+                        var key = $"input_{fieldName}";
+                        if (lastInputState.ContainsKey(key))
+                        {
+                            var lastValue = lastInputState[key];
+                            if (!object.Equals(lastValue, value))
+                            {
+                                metric.Data[$"{fieldName}_changed"] = true;
+                            }
+                        }
+                        lastInputState[key] = value is bool ? (bool)value : false;
+                    }
+                }
+            }
+
+            // Unity Input System
+            metric.Data["horizontal_axis"] = Input.GetAxis("Horizontal");
+            metric.Data["vertical_axis"] = Input.GetAxis("Vertical");
+            metric.Data["mouse_position"] = new { x = Input.mousePosition.x, y = Input.mousePosition.y };
+            metric.Data["any_key"] = Input.anyKey;
+            metric.Data["any_key_down"] = Input.anyKeyDown;
+            metric.Data["ime_is_selected"] = Input.imeIsSelected;
+            metric.Data["input_string"] = Input.inputString;
+
+            // Touch/Controller
+            metric.Data["touch_supported"] = Input.touchSupported;
+            metric.Data["multi_touch_enabled"] = Input.multiTouchEnabled;
+            metric.Data["touch_count"] = Input.touchCount;
+            metric.Data["mouse_present"] = Input.mousePresent;
+            metric.Data["pen_event_count"] = Input.penEventCount;
+
+            // Controller information
+            var joystickNames = Input.GetJoystickNames();
+            metric.Data["connected_joysticks"] = joystickNames.Where(j => !string.IsNullOrEmpty(j)).ToArray();
+            metric.Data["joystick_count"] = joystickNames.Length;
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectUIState()
+        {
+            var metric = new GameMetric("ui_state");
+
+            // Find UI managers
+            var uiManager = FindObjectOfType<UIManager>();
+            if (uiManager != null)
+            {
+                var uiType = uiManager.GetType();
+
+                // Try to get UI state fields
+                var stateFields = new string[] { "uiState", "currentMenu", "menuOpen", "pauseMenuOpen", "inventoryOpen" };
+                foreach (var fieldName in stateFields)
+                {
+                    var field = uiType.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (field != null)
+                    {
+                        metric.Data[$"ui_{fieldName}"] = field.GetValue(uiManager)?.ToString() ?? "unknown";
+                    }
+                }
+            }
+
+            // Canvas information
+            var canvases = FindObjectsOfType<Canvas>();
+            metric.Data["active_canvas_count"] = canvases.Length;
+            metric.Data["active_canvases"] = canvases.Take(5).Select(c => new
+            {
+                name = c.name,
+                enabled = c.enabled,
+                render_mode = c.renderMode.ToString(),
+                sorting_order = c.sortingOrder
+            }).ToList();
+
+            // Screen information
+            metric.Data["screen_width"] = Screen.width;
+            metric.Data["screen_height"] = Screen.height;
+            metric.Data["screen_dpi"] = Screen.dpi;
+            metric.Data["screen_fullscreen"] = Screen.fullScreen;
+            metric.Data["screen_fullscreen_mode"] = Screen.fullScreenMode.ToString();
+            metric.Data["screen_orientation"] = Screen.orientation.ToString();
+            metric.Data["screen_safe_area"] = new { x = Screen.safeArea.x, y = Screen.safeArea.y, width = Screen.safeArea.width, height = Screen.safeArea.height };
+            metric.Data["screen_current_resolution"] = new { width = Screen.currentResolution.width, height = Screen.currentResolution.height, refresh_rate = Screen.currentResolution.refreshRate };
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectAudioState()
+        {
+            var metric = new GameMetric("audio_state");
+
+            // Audio listener
+            if (audioListener != null)
+            {
+                metric.Data["audio_listener_enabled"] = audioListener.enabled;
+                metric.Data["audio_listener_position"] = new { x = audioListener.transform.position.x, y = audioListener.transform.position.y, z = audioListener.transform.position.z };
+            }
+
+            // Audio settings
+            metric.Data["audio_listener_volume"] = AudioListener.volume;
+            metric.Data["audio_listener_pause"] = AudioListener.pause;
+            metric.Data["audio_doppler_factor"] = AudioSettings.dopplerFactor;
+            metric.Data["audio_speaker_mode"] = AudioSettings.speakerMode.ToString();
+            metric.Data["audio_dsp_buffer_size"] = AudioSettings.dspBufferSize;
+            metric.Data["audio_sample_rate"] = AudioSettings.outputSampleRate;
+
+            // Active audio sources
+            var audioSources = FindObjectsOfType<AudioSource>();
+            var activeSources = audioSources.Where(a => a.isPlaying).ToList();
+            metric.Data["total_audio_sources"] = audioSources.Length;
+            metric.Data["playing_audio_sources"] = activeSources.Count;
+            metric.Data["active_audio"] = activeSources.Take(10).Select(a => new
+            {
+                name = a.gameObject.name,
+                clip_name = a.clip?.name ?? "none",
+                volume = a.volume,
+                pitch = a.pitch,
+                time = a.time,
+                loop = a.loop,
+                spatial_blend = a.spatialBlend
+            }).ToList();
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectPhysicsState()
+        {
+            var metric = new GameMetric("physics_state");
+
+            // Physics2D settings
+            metric.Data["physics2d_gravity"] = new { x = Physics2D.gravity.x, y = Physics2D.gravity.y };
+            metric.Data["physics2d_position_iterations"] = Physics2D.positionIterations;
+            metric.Data["physics2d_velocity_iterations"] = Physics2D.velocityIterations;
+            metric.Data["physics2d_velocity_threshold"] = Physics2D.velocityThreshold;
+            metric.Data["physics2d_max_linear_correction"] = Physics2D.maxLinearCorrection;
+            metric.Data["physics2d_max_angular_correction"] = Physics2D.maxAngularCorrection;
+            metric.Data["physics2d_max_translation_speed"] = Physics2D.maxTranslationSpeed;
+            metric.Data["physics2d_max_rotation_speed"] = Physics2D.maxRotationSpeed;
+            metric.Data["physics2d_bounce_threshold"] = Physics2D.bounceThreshold;
+            metric.Data["physics2d_default_contact_offset"] = Physics2D.defaultContactOffset;
+            metric.Data["physics2d_auto_simulation"] = Physics2D.autoSimulation;
+            metric.Data["physics2d_queries_hit_triggers"] = Physics2D.queriesHitTriggers;
+            metric.Data["physics2d_queries_start_in_colliders"] = Physics2D.queriesStartInColliders;
+            metric.Data["physics2d_callback_on_disable"] = Physics2D.callbacksOnDisable;
+            metric.Data["physics2d_reuse_collision_callbacks"] = Physics2D.reuseCollisionCallbacks;
+            metric.Data["physics2d_auto_sync_transforms"] = Physics2D.autoSyncTransforms;
+
+            // Count physics objects
+            var rigidbodies = FindObjectsOfType<Rigidbody2D>();
+            var colliders = FindObjectsOfType<Collider2D>();
+            metric.Data["rigidbody2d_count"] = rigidbodies.Length;
+            metric.Data["collider2d_count"] = colliders.Length;
+            metric.Data["active_rigidbodies"] = rigidbodies.Where(r => !r.IsSleeping()).Count();
+            metric.Data["trigger_colliders"] = colliders.Where(c => c.isTrigger).Count();
+
+            // Layer collision matrix
+            var layerMatrix = new Dictionary<string, bool>();
+            for (int i = 0; i < 32; i++)
+            {
+                var layerName = LayerMask.LayerToName(i);
+                if (!string.IsNullOrEmpty(layerName))
+                {
+                    for (int j = i; j < 32; j++)
+                    {
+                        var otherLayerName = LayerMask.LayerToName(j);
+                        if (!string.IsNullOrEmpty(otherLayerName))
+                        {
+                            var key = $"{layerName}_{otherLayerName}";
+                            layerMatrix[key] = !Physics2D.GetIgnoreLayerCollision(i, j);
+                        }
+                    }
+                }
+            }
+            metric.Data["layer_collision_matrix"] = layerMatrix;
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectPluginInformation()
+        {
+            var metric = new GameMetric("bepinex_plugins");
+
+            // BepInEx information
+            metric.Data["bepinex_version"] = typeof(BaseUnityPlugin).Assembly.GetName().Version.ToString();
+            metric.Data["harmony_version"] = typeof(Harmony).Assembly.GetName().Version.ToString();
+
+            // Loaded plugins
+            var loadedPlugins = new List<object>();
+            foreach (var plugin in Chainloader.PluginInfos.Values)
+            {
+                loadedPlugins.Add(new
+                {
+                    guid = plugin.Metadata.GUID,
+                    name = plugin.Metadata.Name,
+                    version = plugin.Metadata.Version.ToString(),
+                    location = plugin.Location,
+                    processes = plugin.Processes?.ToList() ?? new List<string>(),
+                    dependencies = plugin.Dependencies?.Select(d => new { guid = d.DependencyGUID, version = d.MinimumVersion?.ToString() }).ToList()
+                });
+            }
+            metric.Data["loaded_plugins"] = loadedPlugins;
+            metric.Data["plugin_count"] = loadedPlugins.Count;
+
+            // Harmony patches
+            var allPatchedMethods = Harmony.GetAllPatchedMethods().ToList();
+            metric.Data["total_patched_methods"] = allPatchedMethods.Count;
+            metric.Data["patched_methods_sample"] = allPatchedMethods.Take(20).Select(m => $"{m.DeclaringType?.Name}.{m.Name}").ToList();
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private System.Collections.IEnumerator CollectExpensiveMetrics()
+        {
+            while (true)
+            {
+                yield return new WaitForSeconds(5f); // Collect expensive metrics every 5 seconds
+
+                try
+                {
+                    CollectGameObjectHierarchy();
+                    CollectSaveDataState();
+                }
+                catch (Exception ex)
+                {
+                    DataExportBusPlugin.ModLogger?.LogError($"Error in expensive metrics collection: {ex}");
+                }
+            }
+        }
+
+        private void CollectGameObjectHierarchy()
+        {
+            var metric = new GameMetric("gameobject_hierarchy");
+
+            // Count objects by type
+            var typeCounts = new Dictionary<string, int>();
+            var allObjects = FindObjectsOfType<GameObject>();
+
+            metric.Data["total_gameobjects"] = allObjects.Length;
+            metric.Data["active_gameobjects"] = allObjects.Where(g => g.activeInHierarchy).Count();
+
+            // Count by component type
+            var componentCounts = new Dictionary<string, int>();
+            componentCounts["Transform"] = FindObjectsOfType<Transform>().Length;
+            componentCounts["Renderer"] = FindObjectsOfType<Renderer>().Length;
+            componentCounts["Collider2D"] = FindObjectsOfType<Collider2D>().Length;
+            componentCounts["Rigidbody2D"] = FindObjectsOfType<Rigidbody2D>().Length;
+            componentCounts["AudioSource"] = FindObjectsOfType<AudioSource>().Length;
+            componentCounts["ParticleSystem"] = FindObjectsOfType<ParticleSystem>().Length;
+            componentCounts["Light"] = FindObjectsOfType<Light>().Length;
+            componentCounts["Canvas"] = FindObjectsOfType<Canvas>().Length;
+            componentCounts["Camera"] = FindObjectsOfType<Camera>().Length;
+            componentCounts["Animator"] = FindObjectsOfType<Animator>().Length;
+            metric.Data["component_counts"] = componentCounts;
+
+            // Root game objects in scene
+            var scene = SceneManager.GetActiveScene();
+            var rootObjects = scene.GetRootGameObjects();
+            metric.Data["root_gameobject_count"] = rootObjects.Length;
+            metric.Data["root_gameobjects"] = rootObjects.Take(20).Select(g => new
+            {
+                name = g.name,
+                active = g.activeSelf,
+                tag = g.tag,
+                layer = LayerMask.LayerToName(g.layer),
+                child_count = g.transform.childCount
+            }).ToList();
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private void CollectSaveDataState()
+        {
+            if (playerData == null) return;
+
+            var metric = new GameMetric("save_data_state");
+
+            // Profile information
+            metric.Data["profile_id"] = playerData.profileID;
+            metric.Data["version"] = playerData.version;
+            metric.Data["permadeath_mode"] = playerData.permadeathMode;
+
+            // Progression tracking
+            metric.Data["map_zones_unlocked"] = playerData.mapZonesUnlocked;
+            metric.Data["scenes_visited"] = playerData.scenesVisited?.Count ?? 0;
+            metric.Data["scenes_grubbed"] = playerData.scenesGrubRescued?.Count ?? 0;
+
+            // Abilities and items (check if these exist in Silksong)
+            var abilities = new Dictionary<string, bool>();
+            var pdType = playerData.GetType();
+
+            // Common abilities to check
+            var abilityFields = new string[]
+            {
+                "hasDash", "hasWallJump", "hasDoubleJump", "hasSuperDash", "hasShadowDash",
+                "hasAcidArmor", "hasIsmasTear", "hasKingsBrand", "hasSpell", "hasDreamNail",
+                "hasDreamGate", "hasLantern", "hasTramPass", "hasQuill", "hasMap", "hasCompass",
+                "canDash", "canWallJump", "canSuperDash", "canShadowDash"
+            };
+
+            foreach (var fieldName in abilityFields)
+            {
+                var field = pdType.GetField(fieldName);
+                if (field != null && field.FieldType == typeof(bool))
+                {
+                    abilities[fieldName] = (bool)field.GetValue(playerData);
+                }
+            }
+            metric.Data["abilities"] = abilities;
+
+            // Charms (if they exist in Silksong)
+            var charms = new Dictionary<string, bool>();
+            for (int i = 1; i <= 40; i++)
+            {
+                var gotCharmField = pdType.GetField($"gotCharm_{i}");
+                var equippedField = pdType.GetField($"equippedCharm_{i}");
+                if (gotCharmField != null)
+                {
+                    charms[$"charm_{i}_got"] = (bool)gotCharmField.GetValue(playerData);
+                }
+                if (equippedField != null)
+                {
+                    charms[$"charm_{i}_equipped"] = (bool)equippedField.GetValue(playerData);
+                }
+            }
+            metric.Data["charms"] = charms;
+
+            // Statistics
+            var stats = new Dictionary<string, object>();
+            var statFields = new string[]
+            {
+                "geo", "ore", "simpleKeys", "rancidEggs", "jinnEggsSold", "grubsCollected",
+                "guardiansDefeated", "stationsOpened", "stagStationsOpened", "charmSlots",
+                "maxHealthCap", "heartPieces", "vesselFragments", "fireballLevel", "quakeLevel",
+                "screamLevel", "hasCyclone", "hasDashSlash", "hasUpwardSlash", "hasGreatSlash"
+            };
+
+            foreach (var fieldName in statFields)
+            {
+                var field = pdType.GetField(fieldName);
+                if (field != null)
+                {
+                    stats[fieldName] = field.GetValue(playerData);
+                }
+            }
+            metric.Data["statistics"] = stats;
+
+            DataExportBusPlugin.Instance?.BroadcastMetric(metric);
+        }
+
+        private string ColorToString(Color color)
+        {
+            return $"rgba({color.r:F2},{color.g:F2},{color.b:F2},{color.a:F2})";
+        }
+    }
+}

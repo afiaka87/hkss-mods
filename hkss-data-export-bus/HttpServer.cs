@@ -1,99 +1,254 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using BepInEx.Logging;
 using Newtonsoft.Json;
+using HKSS.DataExportBus.Security;
 
 namespace HKSS.DataExportBus
 {
-    public class HttpServer
+    public class HttpServer : IDisposable
     {
-        private HttpListener listener;
-        private readonly string bindAddress;
-        private readonly int port;
-        private readonly string authToken;
-        private readonly string[] allowedOrigins;
-        private readonly Queue<GameMetric> metricsQueue = new Queue<GameMetric>();
-        private readonly object queueLock = new object();
-        private bool isRunning = false;
-        private const int MAX_QUEUE_SIZE = 5000; // Configurable max queue size
-        private readonly SemaphoreSlim requestSemaphore = new SemaphoreSlim(10, 10); // Max 10 concurrent requests
+        private readonly ManualLogSource _logger;
+        private HttpListener _listener;
+        private readonly string _bindAddress;
+        private readonly int _port;
+        private readonly string _authToken;
+        private readonly string[] _allowedOrigins;
+        private readonly ConcurrentQueue<GameMetric> _metricsQueue;
+        private readonly SemaphoreSlim _requestSemaphore;
+        private readonly CancellationTokenSource _shutdownTokenSource;
+        private readonly ReaderWriterLockSlim _stateLock;
+        private volatile bool _isRunning;
+        private bool _disposed;
+        private string _dashboardHtml;
+        private DateTime _startTime;
 
         public HttpServer(string bindAddress, int port, string authToken, string allowedOrigins)
         {
-            this.bindAddress = bindAddress;
-            this.port = port;
-            this.authToken = authToken;
-            this.allowedOrigins = string.IsNullOrEmpty(allowedOrigins) ? new[] { "*" } : allowedOrigins.Split(',');
+            _logger = DataExportBusPlugin.ModLogger;
+
+            // Validate and sanitize inputs
+            if (!SecurityValidator.ValidateBindAddress(bindAddress))
+            {
+                _logger?.LogWarning($"Invalid bind address {bindAddress}, using localhost");
+                bindAddress = "localhost";
+            }
+
+            if (!SecurityValidator.ValidatePort(port))
+            {
+                _logger?.LogWarning($"Invalid port {port}, using default");
+                port = HKSS.DataExportBus.Configuration.Constants.Network.DEFAULT_HTTP_PORT;
+            }
+
+            _bindAddress = bindAddress;
+            _port = port;
+            _authToken = authToken;
+            _allowedOrigins = string.IsNullOrWhiteSpace(allowedOrigins)
+                ? new[] { "*" }
+                : allowedOrigins.Split(',').Select(o => o.Trim()).ToArray();
+
+            _metricsQueue = new ConcurrentQueue<GameMetric>();
+            _requestSemaphore = new SemaphoreSlim(
+                HKSS.DataExportBus.Configuration.Constants.Network.MAX_CONCURRENT_HTTP_REQUESTS,
+                HKSS.DataExportBus.Configuration.Constants.Network.MAX_CONCURRENT_HTTP_REQUESTS
+            );
+            _shutdownTokenSource = new CancellationTokenSource();
+            _stateLock = new ReaderWriterLockSlim(LockRecursionPolicy.NoRecursion);
+            _startTime = DateTime.UtcNow;
+
+            LoadDashboardHtml();
+        }
+
+        private void LoadDashboardHtml()
+        {
+            try
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                var resourcePath = "HKSS.DataExportBus.Resources.dashboard.html";
+
+                // Try embedded resource first
+                using (var stream = assembly.GetManifestResourceStream(resourcePath))
+                {
+                    if (stream != null)
+                    {
+                        using (var reader = new StreamReader(stream, Encoding.UTF8))
+                        {
+                            _dashboardHtml = reader.ReadToEnd();
+                            _logger?.LogInfo("Loaded dashboard HTML from embedded resource");
+                            return;
+                        }
+                    }
+                }
+
+                // Fallback to file system
+                var filePath = Path.Combine(Path.GetDirectoryName(assembly.Location), "Resources", "dashboard.html");
+                if (File.Exists(filePath))
+                {
+                    _dashboardHtml = File.ReadAllText(filePath, Encoding.UTF8);
+                    _logger?.LogInfo("Loaded dashboard HTML from file");
+                    return;
+                }
+
+                // Use minimal fallback
+                _dashboardHtml = GetFallbackDashboard();
+                _logger?.LogWarning("Using fallback dashboard HTML");
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Failed to load dashboard HTML: {ex}");
+                _dashboardHtml = GetFallbackDashboard();
+            }
+        }
+
+        private string GetFallbackDashboard()
+        {
+            return @"<!DOCTYPE html>
+<html>
+<head><title>Data Export Bus</title></head>
+<body>
+<h1>Data Export Bus</h1>
+<p>Dashboard resources not found. API endpoints are still available:</p>
+<ul>
+<li>/api/status</li>
+<li>/api/metrics</li>
+<li>/api/state</li>
+<li>/api/events</li>
+</ul>
+</body>
+</html>";
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
         {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(HttpServer));
+
             try
             {
-                listener = new HttpListener();
-                string prefix = $"http://{bindAddress}:{port}/";
-                listener.Prefixes.Add(prefix);
-                listener.Start();
-                isRunning = true;
+                _listener = new HttpListener();
 
-                DataExportBusPlugin.ModLogger?.LogInfo($"HTTP server listening on {prefix}");
-
-                while (!cancellationToken.IsCancellationRequested && isRunning)
+                // Security: Only bind to localhost unless explicitly configured
+                string safeBindAddress = _bindAddress;
+                if (safeBindAddress == "0.0.0.0" || safeBindAddress == "*")
                 {
-                    try
-                    {
-                        var contextTask = listener.GetContextAsync();
-                        var completedTask = await Task.WhenAny(contextTask, Task.Delay(-1, cancellationToken));
+                    _logger?.LogWarning("Binding to all interfaces is a security risk. Consider using 'localhost' instead.");
+                }
 
-                        if (completedTask == contextTask)
+                string prefix = $"http://{safeBindAddress}:{_port}/";
+                _listener.Prefixes.Add(prefix);
+                _listener.Start();
+                _isRunning = true;
+
+                _logger?.LogInfo($"HTTP server listening on {prefix}");
+
+                using (var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken, _shutdownTokenSource.Token))
+                {
+                    while (!linkedTokenSource.Token.IsCancellationRequested && _isRunning)
+                    {
+                        try
                         {
-                            var context = await contextTask;
-                            _ = Task.Run(async () => await HandleRequestWithLimit(context), cancellationToken);
+                            var contextTask = _listener.GetContextAsync();
+                            var completedTask = await Task.WhenAny(
+                                contextTask,
+                                Task.Delay(-1, linkedTokenSource.Token)
+                            ).ConfigureAwait(false);
+
+                            if (completedTask == contextTask)
+                            {
+                                var context = await contextTask.ConfigureAwait(false);
+
+                                // Handle request with proper async pattern
+                                var requestTask = HandleRequestWithLimitAsync(context, linkedTokenSource.Token);
+
+                                // Fire and forget with error logging
+                                _ = requestTask.ContinueWith(t =>
+                                {
+                                    if (t.IsFaulted)
+                                    {
+                                        _logger?.LogError($"Request handling failed: {t.Exception?.GetBaseException()}");
+                                    }
+                                }, TaskScheduler.Default);
+                            }
                         }
-                    }
-                    catch (HttpListenerException ex) when (ex.ErrorCode == 995) // Listener stopped
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        DataExportBusPlugin.ModLogger?.LogError($"HTTP server error: {ex.Message}");
+                        catch (HttpListenerException ex) when (ex.ErrorCode == 995) // Listener stopped
+                        {
+                            _logger?.LogInfo("HTTP listener stopped gracefully");
+                            break;
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            _logger?.LogInfo("HTTP server shutdown requested");
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.LogError($"HTTP server error: {ex}");
+                            await Task.Delay(1000, linkedTokenSource.Token).ConfigureAwait(false);
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
-                DataExportBusPlugin.ModLogger?.LogError($"Failed to start HTTP server: {ex}");
-            }
-        }
-
-        private async Task HandleRequestWithLimit(HttpListenerContext context)
-        {
-            await requestSemaphore.WaitAsync();
-            try
-            {
-                await HandleRequest(context);
+                _logger?.LogError($"Failed to start HTTP server: {ex}");
+                throw;
             }
             finally
             {
-                requestSemaphore.Release();
+                _isRunning = false;
             }
         }
 
-        private async Task HandleRequest(HttpListenerContext context)
+        private async Task HandleRequestWithLimitAsync(HttpListenerContext context, CancellationToken cancellationToken)
+        {
+            await _requestSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await HandleRequestAsync(context, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _requestSemaphore.Release();
+            }
+        }
+
+        private async Task HandleRequestAsync(HttpListenerContext context, CancellationToken cancellationToken)
         {
             try
             {
+                // Check request size limit
+                if (context.Request.ContentLength64 > HKSS.DataExportBus.Configuration.Constants.Network.MAX_REQUEST_SIZE_BYTES)
+                {
+                    _logger?.LogWarning($"Request too large: {context.Request.ContentLength64} bytes");
+                    await SendResponseAsync(context.Response, 413, HKSS.DataExportBus.Configuration.Constants.ErrorMessages.INTERNAL_SERVER_ERROR).ConfigureAwait(false);
+                    return;
+                }
+
+                // Rate limiting by IP
+                string clientIp = context.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
+                if (!SecurityValidator.CheckRateLimit(clientIp,
+                    HKSS.DataExportBus.Configuration.Constants.RateLimit.MAX_REQUESTS_PER_WINDOW,
+                    TimeSpan.FromSeconds(HKSS.DataExportBus.Configuration.Constants.RateLimit.RATE_LIMIT_WINDOW_SECONDS)))
+                {
+                    _logger?.LogWarning($"Rate limit exceeded for {clientIp}");
+                    await SendResponseAsync(context.Response, 429, "Too many requests").ConfigureAwait(false);
+                    return;
+                }
+
                 // Set CORS headers
                 SetCorsHeaders(context.Request, context.Response);
 
                 // Handle preflight requests
-                if (context.Request.HttpMethod == "OPTIONS")
+                if (context.Request.HttpMethod == HKSS.DataExportBus.Configuration.Constants.HttpMethods.OPTIONS)
                 {
                     context.Response.StatusCode = 200;
                     context.Response.Close();
@@ -101,73 +256,79 @@ namespace HKSS.DataExportBus
                 }
 
                 // Check authentication
-                if (!string.IsNullOrEmpty(authToken))
+                if (!string.IsNullOrWhiteSpace(_authToken))
                 {
                     string providedToken = context.Request.Headers["Authorization"];
-                    if (providedToken != $"Bearer {authToken}")
+                    string expectedToken = $"{HKSS.DataExportBus.Configuration.Constants.Http.AUTH_HEADER_PREFIX}{_authToken}";
+
+                    if (!SecurityValidator.SecureCompareStrings(providedToken, expectedToken))
                     {
-                        await SendResponse(context.Response, 401, "Unauthorized");
+                        _logger?.LogWarning($"Authentication failed from {clientIp}");
+                        await SendResponseAsync(context.Response, 401, HKSS.DataExportBus.Configuration.Constants.ErrorMessages.UNAUTHORIZED).ConfigureAwait(false);
                         return;
                     }
                 }
 
-                // Route request
-                string path = context.Request.Url.AbsolutePath;
+                // Route request with sanitized path
+                string path = SecurityValidator.SanitizeCommand(context.Request.Url.AbsolutePath);
                 string method = context.Request.HttpMethod;
 
-                switch (path.ToLower())
+                // Log request
+                _logger?.LogInfo($"HTTP {method} {path} from {clientIp}");
+
+                switch (path.ToLowerInvariant())
                 {
                     case "/api/status":
-                        await HandleStatus(context.Response);
+                        await HandleStatusAsync(context.Response, cancellationToken).ConfigureAwait(false);
                         break;
 
                     case "/api/metrics":
-                        await HandleMetrics(context.Response);
+                        await HandleMetricsAsync(context.Response, cancellationToken).ConfigureAwait(false);
                         break;
 
                     case "/api/events":
-                        await HandleEvents(context.Response);
+                        await HandleEventsAsync(context.Response, cancellationToken).ConfigureAwait(false);
                         break;
 
                     case "/api/state":
-                        await HandleState(context.Response);
+                        await HandleStateAsync(context.Response, cancellationToken).ConfigureAwait(false);
                         break;
 
                     case "/api/livesplit/start":
-                        if (method == "POST")
-                            await HandleLiveSplitCommand(context.Response, "starttimer");
+                        if (method == HKSS.DataExportBus.Configuration.Constants.HttpMethods.POST)
+                            await HandleLiveSplitCommandAsync(context.Response, "starttimer", cancellationToken).ConfigureAwait(false);
                         else
-                            await SendResponse(context.Response, 405, "Method not allowed");
+                            await SendResponseAsync(context.Response, 405, HKSS.DataExportBus.Configuration.Constants.ErrorMessages.METHOD_NOT_ALLOWED).ConfigureAwait(false);
                         break;
 
                     case "/api/livesplit/split":
-                        if (method == "POST")
-                            await HandleLiveSplitCommand(context.Response, "split");
+                        if (method == HKSS.DataExportBus.Configuration.Constants.HttpMethods.POST)
+                            await HandleLiveSplitCommandAsync(context.Response, "split", cancellationToken).ConfigureAwait(false);
                         else
-                            await SendResponse(context.Response, 405, "Method not allowed");
+                            await SendResponseAsync(context.Response, 405, HKSS.DataExportBus.Configuration.Constants.ErrorMessages.METHOD_NOT_ALLOWED).ConfigureAwait(false);
                         break;
 
                     case "/api/livesplit/reset":
-                        if (method == "POST")
-                            await HandleLiveSplitCommand(context.Response, "reset");
+                        if (method == HKSS.DataExportBus.Configuration.Constants.HttpMethods.POST)
+                            await HandleLiveSplitCommandAsync(context.Response, "reset", cancellationToken).ConfigureAwait(false);
                         else
-                            await SendResponse(context.Response, 405, "Method not allowed");
+                            await SendResponseAsync(context.Response, 405, HKSS.DataExportBus.Configuration.Constants.ErrorMessages.METHOD_NOT_ALLOWED).ConfigureAwait(false);
                         break;
 
                     case "/":
                     case "/index.html":
-                        await HandleDashboard(context.Response);
+                        await HandleDashboard(context.Response).ConfigureAwait(false);
                         break;
 
                     default:
-                        await SendResponse(context.Response, 404, "Not found");
+                        await SendResponseAsync(context.Response, 404, HKSS.DataExportBus.Configuration.Constants.ErrorMessages.NOT_FOUND).ConfigureAwait(false);
                         break;
                 }
             }
             catch (Exception ex)
             {
-                DataExportBusPlugin.ModLogger?.LogError($"Error handling HTTP request: {ex}");
-                await SendResponse(context.Response, 500, "Internal server error");
+                _logger?.LogError($"Error handling HTTP request: {ex}");
+                await SendResponseAsync(context.Response, 500, HKSS.DataExportBus.Configuration.Constants.ErrorMessages.INTERNAL_SERVER_ERROR).ConfigureAwait(false);
             }
         }
 
@@ -175,196 +336,209 @@ namespace HKSS.DataExportBus
         {
             var origin = request.Headers["Origin"];
 
-            // Check if origin is allowed and set appropriate CORS header
-            if (!string.IsNullOrEmpty(origin) && allowedOrigins.Any(o => string.Equals(o, origin, StringComparison.OrdinalIgnoreCase)))
+            // Validate origin using SecurityValidator
+            if (SecurityValidator.ValidateOrigin(origin, _allowedOrigins))
             {
-                response.Headers.Add("Access-Control-Allow-Origin", origin);
-                response.Headers.Add("Vary", "Origin");
-            }
-            else if (allowedOrigins.Contains("*"))
-            {
-                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                if (_allowedOrigins.Contains("*"))
+                {
+                    response.Headers.Add("Access-Control-Allow-Origin", "*");
+                }
+                else
+                {
+                    response.Headers.Add("Access-Control-Allow-Origin", origin);
+                    response.Headers.Add("Vary", "Origin");
+                }
             }
 
             response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
             response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization");
-            response.Headers.Add("Access-Control-Max-Age", "600");
+            response.Headers.Add("Access-Control-Max-Age", HKSS.DataExportBus.Configuration.Constants.Http.CORS_MAX_AGE);
         }
 
-        private async Task HandleStatus(HttpListenerResponse response)
+        private async Task HandleStatusAsync(HttpListenerResponse response, CancellationToken cancellationToken)
         {
+            var uptime = DateTime.UtcNow - _startTime;
             var status = new
             {
                 status = "online",
                 version = PluginInfo.PLUGIN_VERSION,
-                uptime = DateTime.UtcNow.ToString("o"),
+                uptime = uptime.ToString(@"dd\.hh\:mm\:ss"),
+                startTime = _startTime.ToString(HKSS.DataExportBus.Configuration.Constants.FileExport.ISO_DATETIME_FORMAT),
                 connections = new
                 {
-                    http = isRunning,
-                    tcp = DataExportBusPlugin.Instance.EnableTcpServer.Value,
-                    websocket = DataExportBusPlugin.Instance.EnableWebSocketServer.Value,
-                    file = DataExportBusPlugin.Instance.EnableFileExport.Value
+                    http = _isRunning,
+                    tcp = DataExportBusPlugin.Instance?.EnableTcpServer?.Value ?? false,
+                    websocket = DataExportBusPlugin.Instance?.EnableWebSocketServer?.Value ?? false,
+                    file = DataExportBusPlugin.Instance?.EnableFileExport?.Value ?? false
+                },
+                metrics = new
+                {
+                    queueSize = _metricsQueue.Count,
+                    maxQueueSize = HKSS.DataExportBus.Configuration.Constants.Http.MAX_QUEUE_SIZE
                 }
             };
 
-            await SendJsonResponse(response, status);
+            await SendJsonResponseAsync(response, status, cancellationToken).ConfigureAwait(false);
         }
 
-        private async Task HandleMetrics(HttpListenerResponse response)
+        private async Task HandleMetricsAsync(HttpListenerResponse response, CancellationToken cancellationToken)
         {
-            List<GameMetric> metrics;
-            lock (queueLock)
+            var metrics = new List<GameMetric>();
+
+            // Drain queue without blocking
+            while (_metricsQueue.TryDequeue(out var metric) && metrics.Count < HKSS.DataExportBus.Configuration.Constants.Http.MAX_QUEUE_SIZE)
             {
-                metrics = new List<GameMetric>(metricsQueue);
-                metricsQueue.Clear();
+                metrics.Add(metric);
             }
 
-            await SendJsonResponse(response, metrics);
+            await SendJsonResponseAsync(response, metrics, cancellationToken).ConfigureAwait(false);
         }
 
-        private async Task HandleEvents(HttpListenerResponse response)
-        {
-            var collector = DataExportBusPlugin.Instance?.GetMetricsCollector();
-            if (collector != null)
-            {
-                var events = collector.GetRecentEvents();
-                await SendJsonResponse(response, events);
-            }
-            else
-            {
-                await SendJsonResponse(response, new List<string>());
-            }
-        }
-
-        private async Task HandleState(HttpListenerResponse response)
+        private async Task HandleEventsAsync(HttpListenerResponse response, CancellationToken cancellationToken)
         {
             var collector = DataExportBusPlugin.Instance?.GetMetricsCollector();
-            if (collector != null)
-            {
-                var state = collector.GetCurrentState();
-                await SendJsonResponse(response, state);
-            }
-            else
-            {
-                await SendJsonResponse(response, new Dictionary<string, object>());
-            }
+            var events = collector?.GetRecentEvents() ?? new List<string>();
+            await SendJsonResponseAsync(response, events, cancellationToken).ConfigureAwait(false);
         }
 
-        private async Task HandleLiveSplitCommand(HttpListenerResponse response, string command)
+        private async Task HandleStateAsync(HttpListenerResponse response, CancellationToken cancellationToken)
+        {
+            var collector = DataExportBusPlugin.Instance?.GetMetricsCollector();
+            var state = collector?.GetCurrentState() ?? new Dictionary<string, object>();
+            await SendJsonResponseAsync(response, state, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task HandleLiveSplitCommandAsync(HttpListenerResponse response, string command, CancellationToken cancellationToken)
         {
             // Forward to TCP server if available
-            // This would trigger the appropriate LiveSplit command
-            await SendJsonResponse(response, new { command = command, status = "sent" });
+            var tcpServer = DataExportBusPlugin.Instance?.GetTcpServer();
+            string tcpResponse = "";
+            string status = "failed";
+
+            if (tcpServer != null)
+            {
+                try
+                {
+                    tcpResponse = tcpServer.ProcessLiveSplitCommand(command);
+                    status = "success";
+                    _logger?.LogInfo($"Forwarded LiveSplit command via HTTP: {command}");
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError($"Error forwarding LiveSplit command: {ex.Message}");
+                    tcpResponse = "Error processing command";
+                }
+            }
+            else
+            {
+                tcpResponse = "TCP server not available";
+            }
+
+            var result = new
+            {
+                command = command,
+                status = status,
+                response = tcpResponse,
+                timestamp = DateTime.UtcNow.ToString(HKSS.DataExportBus.Configuration.Constants.FileExport.ISO_DATETIME_FORMAT)
+            };
+
+            await SendJsonResponseAsync(response, result, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task HandleDashboard(HttpListenerResponse response)
         {
-            string html = @"<!DOCTYPE html>
-<html>
-<head>
-    <title>Data Export Bus Dashboard</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
-        h1 { color: #4CAF50; }
-        .metric { background: #2a2a2a; padding: 10px; margin: 10px 0; border-radius: 5px; }
-        .label { color: #888; }
-        .value { color: #4CAF50; font-weight: bold; }
-        #status { padding: 10px; background: #2a2a2a; border-radius: 5px; }
-        button { background: #4CAF50; color: white; border: none; padding: 10px 20px; margin: 5px; cursor: pointer; border-radius: 5px; }
-        button:hover { background: #45a049; }
-    </style>
-</head>
-<body>
-    <h1>Hollow Knight: Silksong - Data Export Bus</h1>
-    <div id='status'>Loading...</div>
-    <div id='metrics'></div>
-    <div>
-        <button onclick='fetchStatus()'>Refresh Status</button>
-        <button onclick='fetchMetrics()'>Get Metrics</button>
-        <button onclick='fetchState()'>Get State</button>
-    </div>
-    <script>
-        async function fetchStatus() {
-            try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
-                document.getElementById('status').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
-            } catch (e) {
-                document.getElementById('status').innerHTML = 'Error: ' + e.message;
-            }
+            await SendResponseAsync(response, 200, _dashboardHtml, HKSS.DataExportBus.Configuration.Constants.ContentTypes.TEXT_HTML).ConfigureAwait(false);
         }
 
-        async function fetchMetrics() {
-            try {
-                const response = await fetch('/api/metrics');
-                const data = await response.json();
-                document.getElementById('metrics').innerHTML = '<h2>Recent Metrics</h2><pre>' + JSON.stringify(data, null, 2) + '</pre>';
-            } catch (e) {
-                document.getElementById('metrics').innerHTML = 'Error: ' + e.message;
-            }
-        }
-
-        async function fetchState() {
-            try {
-                const response = await fetch('/api/state');
-                const data = await response.json();
-                document.getElementById('metrics').innerHTML = '<h2>Current State</h2><pre>' + JSON.stringify(data, null, 2) + '</pre>';
-            } catch (e) {
-                document.getElementById('metrics').innerHTML = 'Error: ' + e.message;
-            }
-        }
-
-        // Auto-refresh every 2 seconds
-        setInterval(fetchStatus, 2000);
-        fetchStatus();
-    </script>
-</body>
-</html>";
-
-            await SendResponse(response, 200, html, "text/html");
-        }
-
-        private async Task SendJsonResponse(HttpListenerResponse response, object data)
+        private async Task SendJsonResponseAsync(HttpListenerResponse response, object data, CancellationToken cancellationToken)
         {
             string json = JsonConvert.SerializeObject(data, Formatting.Indented);
-            await SendResponse(response, 200, json, "application/json");
+            await SendResponseAsync(response, 200, json, HKSS.DataExportBus.Configuration.Constants.ContentTypes.APPLICATION_JSON, cancellationToken).ConfigureAwait(false);
         }
 
-        private async Task SendResponse(HttpListenerResponse response, int statusCode, string content, string contentType = "text/plain")
+        private async Task SendResponseAsync(HttpListenerResponse response, int statusCode, string content, string contentType = null, CancellationToken cancellationToken = default)
         {
             try
             {
                 response.StatusCode = statusCode;
-                response.ContentType = contentType;
-                byte[] buffer = Encoding.UTF8.GetBytes(content);
+                response.ContentType = contentType ?? HKSS.DataExportBus.Configuration.Constants.ContentTypes.TEXT_PLAIN;
+                byte[] buffer = Encoding.UTF8.GetBytes(content ?? string.Empty);
+
+                // Validate response size
+                if (buffer.Length > HKSS.DataExportBus.Configuration.Constants.Http.MAX_RESPONSE_SIZE)
+                {
+                    _logger?.LogWarning($"Response too large: {buffer.Length} bytes, truncating");
+                    buffer = Encoding.UTF8.GetBytes("Response too large");
+                }
+
                 response.ContentLength64 = buffer.Length;
-                await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                await response.OutputStream.WriteAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
                 response.OutputStream.Close();
+            }
+            catch (OperationCanceledException)
+            {
+                _logger?.LogInfo("Response cancelled");
             }
             catch (Exception ex)
             {
-                DataExportBusPlugin.ModLogger?.LogError($"Error sending HTTP response: {ex.Message}");
+                _logger?.LogError($"Error sending HTTP response: {ex}");
             }
         }
 
         public void QueueMetric(GameMetric metric)
         {
-            lock (queueLock)
+            if (metric == null || _disposed)
+                return;
+
+            _metricsQueue.Enqueue(metric);
+
+            // Trim queue if too large
+            while (_metricsQueue.Count > HKSS.DataExportBus.Configuration.Constants.Http.MAX_QUEUE_SIZE)
             {
-                metricsQueue.Enqueue(metric);
-                while (metricsQueue.Count > MAX_QUEUE_SIZE) // Keep last MAX_QUEUE_SIZE metrics
-                {
-                    metricsQueue.Dequeue();
-                }
+                _metricsQueue.TryDequeue(out _);
             }
         }
 
         public void Stop()
         {
-            isRunning = false;
-            listener?.Stop();
-            listener?.Close();
-            requestSemaphore?.Dispose();
+            if (_disposed)
+                return;
+
+            _logger?.LogInfo("Stopping HTTP server");
+            _isRunning = false;
+            _shutdownTokenSource?.Cancel();
+
+            try
+            {
+                _listener?.Stop();
+                _listener?.Close();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"Error stopping HTTP server: {ex}");
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
+            {
+                Stop();
+                _shutdownTokenSource?.Dispose();
+                _requestSemaphore?.Dispose();
+                _stateLock?.Dispose();
+            }
+
+            _disposed = true;
         }
     }
 }

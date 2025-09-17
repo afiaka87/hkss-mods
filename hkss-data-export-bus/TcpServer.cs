@@ -12,7 +12,7 @@ using Newtonsoft.Json;
 
 namespace HKSS.DataExportBus
 {
-    public class TcpServer
+    public class TcpServer : IDisposable
     {
         private TcpListener tcpListener;
         private NamedPipeServerStream namedPipe;
@@ -22,6 +22,8 @@ namespace HKSS.DataExportBus
         private readonly List<TcpClient> connectedClients = new List<TcpClient>();
         private readonly object clientLock = new object();
         private bool isRunning = false;
+        private const int MAX_CONNECTED_CLIENTS = 10;
+        private const int MAX_SPLIT_TIMES = 200;
 
         // LiveSplit specific state
         private DateTime timerStartTime;
@@ -50,7 +52,17 @@ namespace HKSS.DataExportBus
                 // Start named pipe if enabled
                 if (enableNamedPipe)
                 {
-                    _ = Task.Run(() => StartNamedPipeAsync(cancellationToken), cancellationToken);
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await StartNamedPipeAsync(cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            DataExportBusPlugin.ModLogger?.LogError($"Named pipe error: {ex}");
+                        }
+                    }, cancellationToken);
                 }
 
                 // Accept TCP connections
@@ -64,7 +76,21 @@ namespace HKSS.DataExportBus
                         if (completedTask == tcpClientTask)
                         {
                             var client = await tcpClientTask;
-                            _ = Task.Run(() => HandleClient(client, cancellationToken), cancellationToken);
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await HandleClient(client, cancellationToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    DataExportBusPlugin.ModLogger?.LogError($"TCP client handler error: {ex}");
+                                }
+                                finally
+                                {
+                                    client?.Dispose();
+                                }
+                            }, cancellationToken);
                         }
                     }
                     catch (ObjectDisposedException)
@@ -105,6 +131,36 @@ namespace HKSS.DataExportBus
                         using (var reader = new StreamReader(namedPipe))
                         using (var writer = new StreamWriter(namedPipe) { AutoFlush = true })
                         {
+                            // Handle authentication if required (named pipes are local, so this is optional)
+                            bool isAuthenticated = string.IsNullOrEmpty(authToken);
+                            if (!isAuthenticated)
+                            {
+                                await writer.WriteLineAsync("AUTH_REQUIRED");
+
+                                string authCommand = await reader.ReadLineAsync();
+                                if (authCommand != null && authCommand.StartsWith("AUTH "))
+                                {
+                                    string providedToken = authCommand.Substring(5).Trim();
+                                    if (providedToken == authToken)
+                                    {
+                                        isAuthenticated = true;
+                                        await writer.WriteLineAsync("AUTH_SUCCESS");
+                                        DataExportBusPlugin.ModLogger?.LogInfo("Named pipe client authenticated");
+                                    }
+                                    else
+                                    {
+                                        await writer.WriteLineAsync("AUTH_FAILED");
+                                        DataExportBusPlugin.ModLogger?.LogWarning("Named pipe client authentication failed");
+                                        continue;
+                                    }
+                                }
+                                else
+                                {
+                                    await writer.WriteLineAsync("AUTH_FAILED");
+                                    continue;
+                                }
+                            }
+
                             while (namedPipe.IsConnected && !cancellationToken.IsCancellationRequested)
                             {
                                 string command = await reader.ReadLineAsync();
@@ -136,6 +192,20 @@ namespace HKSS.DataExportBus
         {
             lock (clientLock)
             {
+                // Limit the number of connected clients
+                if (connectedClients.Count >= MAX_CONNECTED_CLIENTS)
+                {
+                    DataExportBusPlugin.ModLogger?.LogWarning($"Maximum client limit ({MAX_CONNECTED_CLIENTS}) reached. Closing oldest client.");
+                    var oldestClient = connectedClients[0];
+                    connectedClients.RemoveAt(0);
+                    try
+                    {
+                        oldestClient?.Close();
+                        oldestClient?.Dispose();
+                    }
+                    catch { }
+                }
+
                 connectedClients.Add(client);
             }
 
@@ -146,6 +216,48 @@ namespace HKSS.DataExportBus
                 using (var writer = new StreamWriter(stream) { AutoFlush = true })
                 {
                     DataExportBusPlugin.ModLogger?.LogInfo($"TCP client connected from {client.Client.RemoteEndPoint}");
+
+                    // Handle authentication if required
+                    bool isAuthenticated = string.IsNullOrEmpty(authToken);
+                    if (!isAuthenticated)
+                    {
+                        await writer.WriteLineAsync("AUTH_REQUIRED");
+
+                        // Wait for authentication
+                        var authTask = reader.ReadLineAsync();
+                        var authResult = await Task.WhenAny(authTask, Task.Delay(5000, cancellationToken));
+
+                        if (authResult == authTask)
+                        {
+                            string authCommand = await authTask;
+                            if (authCommand != null && authCommand.StartsWith("AUTH "))
+                            {
+                                string providedToken = authCommand.Substring(5).Trim();
+                                if (providedToken == authToken)
+                                {
+                                    isAuthenticated = true;
+                                    await writer.WriteLineAsync("AUTH_SUCCESS");
+                                    DataExportBusPlugin.ModLogger?.LogInfo($"TCP client authenticated from {client.Client.RemoteEndPoint}");
+                                }
+                                else
+                                {
+                                    await writer.WriteLineAsync("AUTH_FAILED");
+                                    DataExportBusPlugin.ModLogger?.LogWarning($"TCP client authentication failed from {client.Client.RemoteEndPoint}");
+                                    return;
+                                }
+                            }
+                            else
+                            {
+                                await writer.WriteLineAsync("AUTH_FAILED");
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            await writer.WriteLineAsync("AUTH_TIMEOUT");
+                            return;
+                        }
+                    }
 
                     // Send initial connection message
                     await writer.WriteLineAsync($"Connected to Data Export Bus v{PluginInfo.PLUGIN_VERSION}");
@@ -188,7 +300,18 @@ namespace HKSS.DataExportBus
             }
         }
 
-        private string ProcessLiveSplitCommand(string command)
+        private void AddSplitTime(TimeSpan time)
+        {
+            // Enforce maximum split times to prevent unbounded growth
+            if (splitTimes.Count >= MAX_SPLIT_TIMES)
+            {
+                DataExportBusPlugin.ModLogger?.LogWarning($"Maximum split times ({MAX_SPLIT_TIMES}) reached. Removing oldest.");
+                splitTimes.RemoveAt(0);
+            }
+            splitTimes.Add(time);
+        }
+
+        public string ProcessLiveSplitCommand(string command)
         {
             if (string.IsNullOrEmpty(command))
                 return "";
@@ -222,7 +345,7 @@ namespace HKSS.DataExportBus
                     else
                     {
                         var splitTime = DateTime.UtcNow - timerStartTime;
-                        splitTimes.Add(splitTime);
+                        AddSplitTime(splitTime);
                         currentSplit++;
                         BroadcastToClients($"Event: Split {currentSplit} - {splitTime:hh\\:mm\\:ss\\.fff}");
                     }
@@ -232,7 +355,7 @@ namespace HKSS.DataExportBus
                     if (timerRunning)
                     {
                         var splitTime = DateTime.UtcNow - timerStartTime;
-                        splitTimes.Add(splitTime);
+                        AddSplitTime(splitTime);
                         currentSplit++;
                         BroadcastToClients($"Event: Split {currentSplit} - {splitTime:hh\\:mm\\:ss\\.fff}");
                         return "OK";
@@ -254,7 +377,7 @@ namespace HKSS.DataExportBus
                     if (timerRunning)
                     {
                         currentSplit++;
-                        splitTimes.Add(TimeSpan.Zero); // Add zero time for skipped split
+                        AddSplitTime(TimeSpan.Zero); // Add zero time for skipped split
                         BroadcastToClients($"Event: Split {currentSplit} skipped");
                         return "OK";
                     }
@@ -426,17 +549,62 @@ namespace HKSS.DataExportBus
         {
             isRunning = false;
 
-            tcpListener?.Stop();
-            namedPipe?.Close();
+            try
+            {
+                tcpListener?.Stop();
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error stopping TCP listener: {ex}");
+            }
+
+            try
+            {
+                namedPipe?.Dispose();
+                namedPipe = null;
+            }
+            catch (Exception ex)
+            {
+                DataExportBusPlugin.ModLogger?.LogError($"Error disposing named pipe: {ex}");
+            }
 
             lock (clientLock)
             {
                 foreach (var client in connectedClients)
                 {
-                    client.Close();
+                    try
+                    {
+                        client?.Close();
+                        client?.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        DataExportBusPlugin.ModLogger?.LogWarning($"Error closing TCP client during shutdown: {ex.Message}");
+                    }
                 }
                 connectedClients.Clear();
             }
+        }
+
+        private bool _disposed = false;
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed)
+                return;
+
+            if (disposing)
+            {
+                Stop();
+            }
+
+            _disposed = true;
         }
     }
 }

@@ -33,6 +33,7 @@ namespace HKSS.DataExportBus
         private WebSocketServer webSocketServer;
         private FileExporter fileExporter;
         private MetricsCollector metricsCollector;
+        // private AdvancedMetricsCollector advancedMetricsCollector;
 
         // Configuration
         public ConfigEntry<bool> Enabled { get; private set; }
@@ -65,6 +66,8 @@ namespace HKSS.DataExportBus
         public ConfigEntry<bool> ExportSceneData { get; private set; }
         public ConfigEntry<bool> ExportInventoryData { get; private set; }
         public ConfigEntry<bool> ExportTimingData { get; private set; }
+        public ConfigEntry<bool> EnableAdvancedMetrics { get; private set; }
+        public ConfigEntry<float> AdvancedMetricsIntervalSec { get; private set; }
 
         // Security Config
         public ConfigEntry<string> AuthToken { get; private set; }
@@ -77,10 +80,20 @@ namespace HKSS.DataExportBus
 
         void Awake()
         {
+            Logger.LogInfo("Data Export Bus Awake() started");
             Instance = this;
             ModLogger = Logger;
 
-            InitializeConfig();
+            try
+            {
+                Logger.LogInfo("Initializing configuration...");
+                InitializeConfig();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to initialize config: {ex}");
+                return;
+            }
 
             if (!Enabled.Value)
             {
@@ -88,15 +101,28 @@ namespace HKSS.DataExportBus
                 return;
             }
 
-            cancellationTokenSource = new CancellationTokenSource();
+            Logger.LogInfo("Data Export Bus is enabled, continuing initialization...");
 
-            harmony = new Harmony(PluginInfo.PLUGIN_GUID);
-            harmony.PatchAll();
+            try
+            {
+                cancellationTokenSource = new CancellationTokenSource();
 
-            CreateExportBusObject();
-            InitializeServers();
+                Logger.LogInfo("Applying Harmony patches...");
+                harmony = new Harmony(PluginInfo.PLUGIN_GUID);
+                harmony.PatchAll();
 
-            Logger.LogInfo($"Data Export Bus v{PluginInfo.PLUGIN_VERSION} loaded!");
+                Logger.LogInfo("Creating export bus object...");
+                CreateExportBusObject();
+
+                Logger.LogInfo("Initializing servers...");
+                InitializeServers();
+
+                Logger.LogInfo($"Data Export Bus v{PluginInfo.PLUGIN_VERSION} loaded successfully!");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to initialize Data Export Bus: {ex}");
+            }
         }
 
         void OnDestroy()
@@ -188,6 +214,13 @@ namespace HKSS.DataExportBus
             ExportTimingData = Config.Bind("DataCollection", "ExportTimingData", true,
                 "Export speedrun timing data");
 
+            EnableAdvancedMetrics = Config.Bind("DataCollection", "EnableAdvancedMetrics", false,
+                "Enable advanced metrics collection (Unity engine, BepInEx plugins, detailed game state)");
+
+            AdvancedMetricsIntervalSec = Config.Bind("DataCollection", "AdvancedMetricsIntervalSec", 0.5f,
+                new ConfigDescription("Interval for advanced metrics collection in seconds",
+                new AcceptableValueRange<float>(0.1f, 10.0f)));
+
             // Security
             AuthToken = Config.Bind("Security", "AuthToken", "",
                 "Authentication token (empty = no auth)");
@@ -214,6 +247,16 @@ namespace HKSS.DataExportBus
 
             // Add metrics collector
             metricsCollector = exportBusObject.AddComponent<MetricsCollector>();
+
+            // Add advanced metrics collector if enabled
+            // TODO: Fix AdvancedMetricsCollector compilation issues
+            /*
+            if (EnableAdvancedMetrics.Value)
+            {
+                advancedMetricsCollector = exportBusObject.AddComponent<AdvancedMetricsCollector>();
+                Logger.LogInfo("Advanced metrics collector enabled");
+            }
+            */
 
             DontDestroyOnLoad(exportBusObject);
         }
@@ -243,8 +286,18 @@ namespace HKSS.DataExportBus
                         AuthToken.Value,
                         AllowedOrigins.Value
                     );
-                    Task.Run(() => httpServer.StartAsync(cancellationTokenSource.Token));
-                    Logger.LogInfo($"HTTP server started on {HttpBindAddress.Value}:{HttpPort.Value}");
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await httpServer.StartAsync(cancellationTokenSource.Token);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError($"HTTP server error: {ex}");
+                        }
+                    }, cancellationTokenSource.Token);
+                    Logger.LogInfo($"HTTP server starting on {HttpBindAddress.Value}:{HttpPort.Value}");
                 }
 
                 // Initialize TCP server
@@ -255,8 +308,18 @@ namespace HKSS.DataExportBus
                         EnableNamedPipe.Value,
                         AuthToken.Value
                     );
-                    Task.Run(() => tcpServer.StartAsync(cancellationTokenSource.Token));
-                    Logger.LogInfo($"TCP server started on port {TcpPort.Value}");
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await tcpServer.StartAsync(cancellationTokenSource.Token);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError($"TCP server error: {ex}");
+                        }
+                    }, cancellationTokenSource.Token);
+                    Logger.LogInfo($"TCP server starting on port {TcpPort.Value}");
                 }
 
                 // Initialize WebSocket server
@@ -267,8 +330,18 @@ namespace HKSS.DataExportBus
                         AuthToken.Value,
                         AllowedOrigins.Value
                     );
-                    Task.Run(() => webSocketServer.StartAsync(cancellationTokenSource.Token));
-                    Logger.LogInfo($"WebSocket server started on port {WebSocketPort.Value}");
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await webSocketServer.StartAsync(cancellationTokenSource.Token);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError($"WebSocket server error: {ex}");
+                        }
+                    }, cancellationTokenSource.Token);
+                    Logger.LogInfo($"WebSocket server starting on port {WebSocketPort.Value}");
                 }
             }
             catch (Exception ex)
@@ -281,10 +354,41 @@ namespace HKSS.DataExportBus
         {
             cancellationTokenSource?.Cancel();
 
-            httpServer?.Stop();
-            tcpServer?.Stop();
-            webSocketServer?.Stop();
-            fileExporter?.Dispose();
+            try
+            {
+                httpServer?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error disposing HTTP server: {ex}");
+            }
+
+            try
+            {
+                tcpServer?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error disposing TCP server: {ex}");
+            }
+
+            try
+            {
+                webSocketServer?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error disposing WebSocket server: {ex}");
+            }
+
+            try
+            {
+                fileExporter?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error disposing file exporter: {ex}");
+            }
 
             Logger.LogInfo("All servers stopped");
         }
@@ -301,6 +405,11 @@ namespace HKSS.DataExportBus
         public MetricsCollector GetMetricsCollector()
         {
             return metricsCollector;
+        }
+
+        public TcpServer GetTcpServer()
+        {
+            return tcpServer;
         }
     }
 
