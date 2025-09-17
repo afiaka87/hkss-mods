@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Damage Dealt Graph (Log Scale)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: transparent;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: #fff;
+            padding: 10px;
+        }
+
+        .container {
+            background: rgba(0, 0, 0, 0.85);
+            border: 2px solid rgba(255, 100, 100, 0.4);
+            border-radius: 8px;
+            padding: 12px;
+            width: 400px;
+            height: 250px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .title {
+            color: #ff8888;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+        }
+
+        .stat-label {
+            color: #888;
+        }
+
+        .stat-value {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        .damage-total {
+            font-size: 18px;
+            font-weight: bold;
+            color: #ffaa33;
+            text-shadow: 0 0 10px rgba(255, 170, 50, 0.5);
+        }
+
+        .dps {
+            color: #ff6666;
+        }
+
+        .graph-container {
+            position: relative;
+            height: 170px;
+            background: linear-gradient(180deg,
+                rgba(40, 20, 20, 0.5) 0%,
+                rgba(20, 20, 30, 0.5) 100%);
+            border: 1px solid rgba(255, 100, 100, 0.2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        .graph-labels {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+
+        .y-label {
+            position: absolute;
+            left: 2px;
+            font-size: 9px;
+            color: #666;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 1px 3px;
+            border-radius: 2px;
+        }
+
+        .log-indicator {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            font-size: 10px;
+            color: #888;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+
+        .status {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #33ff33;
+            box-shadow: 0 0 8px rgba(50, 255, 50, 0.8);
+            animation: pulse 2s infinite;
+        }
+
+        .status.disconnected {
+            background: #ff3333;
+            box-shadow: 0 0 8px rgba(255, 50, 50, 0.8);
+            animation: none;
+        }
+
+        .time-label {
+            position: absolute;
+            bottom: 2px;
+            font-size: 9px;
+            color: #666;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status" id="connectionStatus"></div>
+
+        <div class="header">
+            <div class="title">Damage Dealt</div>
+            <div class="stats">
+                <div>
+                    <span class="stat-label">Total:</span>
+                    <span class="stat-value damage-total" id="damageTotal">0</span>
+                </div>
+                <div>
+                    <span class="stat-label">DPS:</span>
+                    <span class="stat-value dps" id="dps">0.0</span>
+                </div>
+                <div>
+                    <span class="stat-label">Hits:</span>
+                    <span class="stat-value" id="hitCount">0</span>
+                </div>
+                <div>
+                    <span class="stat-label">Time:</span>
+                    <span class="stat-value" id="timeElapsed">0:00</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="graph-container">
+            <canvas id="damageCanvas"></canvas>
+            <div class="graph-labels">
+                <div class="y-label" id="yMax" style="top: 2px;">10k</div>
+                <div class="y-label" id="yMid1" style="top: 25%;">1k</div>
+                <div class="y-label" id="yMid2" style="top: 50%;">100</div>
+                <div class="y-label" id="yMid3" style="top: 75%;">10</div>
+                <div class="y-label" id="yMin" style="bottom: 2px;">1</div>
+                <div class="log-indicator">LOG SCALE</div>
+                <div class="time-label" style="left: 2px;">-30s</div>
+                <div class="time-label" style="right: 2px;">now</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const HTTP_URL = 'http://0.0.0.0:8080';
+        const UPDATE_INTERVAL = 100; // Update every 100ms
+        const HISTORY_SECONDS = 30; // Show last 30 seconds
+        const MIN_LOG_VALUE = 1; // Minimum value for log scale
+
+        // Graph setup
+        const canvas = document.getElementById('damageCanvas');
+        const ctx = canvas.getContext('2d');
+        let canvasWidth, canvasHeight;
+
+        // Data storage
+        const damageHistory = []; // Array of {time, totalDamage, hits}
+        const maxDataPoints = (HISTORY_SECONDS * 1000) / UPDATE_INTERVAL;
+        let startTime = Date.now();
+        let totalDamage = 0;
+        let hitCount = 0;
+        let lastDamageTime = 0;
+
+        // Stats
+        let isConnected = false;
+        let isUpdating = false;
+
+        // Elements
+        const elements = {
+            damageTotal: document.getElementById('damageTotal'),
+            dps: document.getElementById('dps'),
+            hitCount: document.getElementById('hitCount'),
+            timeElapsed: document.getElementById('timeElapsed'),
+            connectionStatus: document.getElementById('connectionStatus'),
+            yMax: document.getElementById('yMax'),
+            yMid1: document.getElementById('yMid1'),
+            yMid2: document.getElementById('yMid2'),
+            yMid3: document.getElementById('yMid3'),
+            yMin: document.getElementById('yMin')
+        };
+
+        // Resize canvas for sharp rendering
+        function resizeCanvas() {
+            const rect = canvas.getBoundingClientRect();
+            canvasWidth = rect.width * window.devicePixelRatio;
+            canvasHeight = rect.height * window.devicePixelRatio;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+
+        // Format large numbers
+        function formatNumber(num) {
+            if (num >= 10000) return (num / 1000).toFixed(1) + 'k';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'k';
+            return num.toString();
+        }
+
+        // Calculate log position (0-1)
+        function getLogPosition(value, minValue, maxValue) {
+            if (value <= 0) return 0;
+
+            const logMin = Math.log10(Math.max(minValue, MIN_LOG_VALUE));
+            const logMax = Math.log10(Math.max(maxValue, MIN_LOG_VALUE));
+            const logValue = Math.log10(Math.max(value, MIN_LOG_VALUE));
+
+            return (logValue - logMin) / (logMax - logMin);
+        }
+
+        // Update Y-axis labels
+        function updateYLabels(maxDamage) {
+            const max = Math.max(maxDamage, 10);
+            const logMax = Math.ceil(Math.log10(max));
+            const logMin = 0;
+
+            elements.yMax.textContent = formatNumber(Math.pow(10, logMax));
+            elements.yMid1.textContent = formatNumber(Math.pow(10, logMax - (logMax - logMin) * 0.25));
+            elements.yMid2.textContent = formatNumber(Math.pow(10, logMax - (logMax - logMin) * 0.5));
+            elements.yMid3.textContent = formatNumber(Math.pow(10, logMax - (logMax - logMin) * 0.75));
+            elements.yMin.textContent = '1';
+        }
+
+        // Draw the damage graph
+        function drawGraph() {
+            if (!ctx) return;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (damageHistory.length < 2) return;
+
+            const width = canvas.width / window.devicePixelRatio;
+            const height = canvas.height / window.devicePixelRatio;
+            const pointSpacing = width / maxDataPoints;
+
+            // Find max damage for scaling
+            const maxDamage = Math.max(...damageHistory.map(d => d.totalDamage), 10);
+            const minDamage = MIN_LOG_VALUE;
+
+            // Update Y labels
+            updateYLabels(maxDamage);
+
+            // Draw grid lines (log scale)
+            ctx.strokeStyle = 'rgba(255, 100, 100, 0.1)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 4]);
+
+            // Draw log scale grid lines
+            const logMax = Math.ceil(Math.log10(Math.max(maxDamage, 10)));
+            for (let i = 0; i <= logMax; i++) {
+                const value = Math.pow(10, i);
+                const y = height - (getLogPosition(value, minDamage, maxDamage) * height);
+
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(width, y);
+                ctx.stroke();
+            }
+
+            ctx.setLineDash([]);
+
+            // Draw damage curve
+            if (damageHistory.length > 0) {
+                // Create gradient fill
+                const gradient = ctx.createLinearGradient(0, height, 0, 0);
+                gradient.addColorStop(0, 'rgba(255, 100, 50, 0.0)');
+                gradient.addColorStop(0.5, 'rgba(255, 150, 50, 0.2)');
+                gradient.addColorStop(1, 'rgba(255, 200, 50, 0.3)');
+
+                // Draw filled area
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.moveTo(0, height);
+
+                for (let i = 0; i < damageHistory.length; i++) {
+                    const x = i * pointSpacing;
+                    const damage = Math.max(damageHistory[i].totalDamage, MIN_LOG_VALUE);
+                    const y = height - (getLogPosition(damage, minDamage, maxDamage) * height);
+
+                    if (i === 0) {
+                        ctx.lineTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+
+                ctx.lineTo((damageHistory.length - 1) * pointSpacing, height);
+                ctx.closePath();
+                ctx.fill();
+
+                // Draw the line
+                ctx.strokeStyle = '#ffaa33';
+                ctx.lineWidth = 2.5;
+                ctx.shadowColor = 'rgba(255, 170, 50, 0.8)';
+                ctx.shadowBlur = 5;
+                ctx.beginPath();
+
+                for (let i = 0; i < damageHistory.length; i++) {
+                    const x = i * pointSpacing;
+                    const damage = Math.max(damageHistory[i].totalDamage, MIN_LOG_VALUE);
+                    const y = height - (getLogPosition(damage, minDamage, maxDamage) * height);
+
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Draw hit markers for recent damage
+                const now = Date.now();
+                ctx.fillStyle = '#ff6666';
+                for (let i = damageHistory.length - 1; i >= Math.max(0, damageHistory.length - 20); i--) {
+                    const point = damageHistory[i];
+                    if (point.newHit && (now - point.time) < 1000) {
+                        const x = i * pointSpacing;
+                        const damage = Math.max(point.totalDamage, MIN_LOG_VALUE);
+                        const y = height - (getLogPosition(damage, minDamage, maxDamage) * height);
+
+                        // Draw pulse effect for recent hits
+                        const age = (now - point.time) / 1000;
+                        const size = 4 * (1 - age);
+                        const opacity = 1 - age;
+
+                        ctx.fillStyle = `rgba(255, 100, 100, ${opacity})`;
+                        ctx.beginPath();
+                        ctx.arc(x, y, size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+        }
+
+        // Fetch and update data
+        async function updateData() {
+            if (isUpdating) return;
+            isUpdating = true;
+
+            try {
+                const response = await fetch(`${HTTP_URL}/api/metrics?t=${Date.now()}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const metrics = await response.json();
+
+                if (metrics && metrics.length > 0) {
+                    const now = Date.now();
+                    let newHit = false;
+
+                    // Check for combat stats update
+                    const combatStats = metrics.find(m => m.EventType === 'combat_stats');
+                    if (combatStats && combatStats.Data) {
+                        const newTotal = combatStats.Data.total_damage_dealt || 0;
+
+                        // Check if damage increased (new hit)
+                        if (newTotal > totalDamage) {
+                            newHit = true;
+                            lastDamageTime = now;
+                            hitCount++;
+                        }
+
+                        totalDamage = newTotal;
+                    }
+
+                    // Check for enemy_damaged events
+                    const damageEvent = metrics.find(m => m.EventType === 'enemy_damaged');
+                    if (damageEvent && damageEvent.Data) {
+                        const damage = damageEvent.Data.damage || 0;
+                        if (damage > 0) {
+                            totalDamage += damage;
+                            hitCount++;
+                            newHit = true;
+                            lastDamageTime = now;
+                        }
+                    }
+
+                    // Add to history
+                    damageHistory.push({
+                        time: now,
+                        totalDamage: totalDamage,
+                        hits: hitCount,
+                        newHit: newHit
+                    });
+
+                    // Trim history
+                    if (damageHistory.length > maxDataPoints) {
+                        damageHistory.shift();
+                    }
+
+                    // Update display
+                    elements.damageTotal.textContent = formatNumber(totalDamage);
+                    elements.hitCount.textContent = hitCount;
+
+                    // Calculate DPS (damage in last 10 seconds)
+                    const tenSecondsAgo = now - 10000;
+                    const oldPoint = damageHistory.find(p => p.time >= tenSecondsAgo) || damageHistory[0];
+                    if (oldPoint) {
+                        const damageInPeriod = totalDamage - (oldPoint.totalDamage || 0);
+                        const timePeriod = (now - oldPoint.time) / 1000;
+                        const dps = timePeriod > 0 ? damageInPeriod / timePeriod : 0;
+                        elements.dps.textContent = dps.toFixed(1);
+                    }
+
+                    // Update time elapsed
+                    const elapsed = (now - startTime) / 1000;
+                    const minutes = Math.floor(elapsed / 60);
+                    const seconds = Math.floor(elapsed % 60);
+                    elements.timeElapsed.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+                    // Update connection status
+                    if (!isConnected) {
+                        isConnected = true;
+                        elements.connectionStatus.classList.remove('disconnected');
+                    }
+
+                    // Redraw graph
+                    drawGraph();
+                }
+            } catch (error) {
+                console.error('Update error:', error);
+                if (isConnected) {
+                    isConnected = false;
+                    elements.connectionStatus.classList.add('disconnected');
+                }
+            } finally {
+                isUpdating = false;
+            }
+        }
+
+        // Initialize
+        function init() {
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // Start update loop
+            setInterval(updateData, UPDATE_INTERVAL);
+            updateData();
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>

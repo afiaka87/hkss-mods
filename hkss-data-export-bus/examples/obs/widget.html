@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Silksong Stats Overlay</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: transparent;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            color: #ffffff;
+            font-size: 14px;
+            overflow: hidden;
+            width: 350px;
+            height: 600px;
+        }
+
+        .container {
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .panel {
+            background: linear-gradient(135deg, rgba(20, 20, 30, 0.85), rgba(30, 30, 40, 0.85));
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            border-radius: 8px;
+            padding: 10px;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+
+        .panel-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #88aaff;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 4px 0;
+            font-size: 13px;
+        }
+
+        .stat-label {
+            color: #aaaaaa;
+            font-weight: 500;
+        }
+
+        .stat-value {
+            color: #ffffff;
+            font-weight: 600;
+            text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+        }
+
+        /* Health Bar */
+        .health-bar {
+            height: 20px;
+            background: rgba(50, 50, 50, 0.8);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 6px 0;
+            position: relative;
+        }
+
+        .health-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff3333, #ff6666);
+            transition: width 0.3s ease;
+            box-shadow: 0 0 10px rgba(255, 50, 50, 0.5);
+        }
+
+        .health-text {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            line-height: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        }
+
+        /* Soul/MP Bar */
+        .soul-bar {
+            height: 16px;
+            background: rgba(50, 50, 50, 0.8);
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 6px 0;
+            position: relative;
+        }
+
+        .soul-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3366ff, #6699ff);
+            transition: width 0.3s ease;
+            box-shadow: 0 0 8px rgba(50, 100, 255, 0.5);
+        }
+
+        /* Speed indicator */
+        .speed-indicator {
+            display: inline-block;
+            padding: 2px 6px;
+            background: rgba(50, 200, 50, 0.3);
+            border-radius: 4px;
+            margin-left: 5px;
+        }
+
+        .speed-high {
+            background: rgba(255, 200, 50, 0.3);
+            color: #ffcc33;
+        }
+
+        .speed-very-high {
+            background: rgba(255, 100, 50, 0.3);
+            color: #ff6633;
+        }
+
+        /* Status indicators */
+        .status-indicators {
+            display: flex;
+            gap: 6px;
+            margin: 6px 0;
+            flex-wrap: wrap;
+        }
+
+        .status-badge {
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-active {
+            background: rgba(50, 200, 50, 0.3);
+            border: 1px solid rgba(50, 200, 50, 0.6);
+            color: #66ff66;
+        }
+
+        .status-inactive {
+            background: rgba(100, 100, 100, 0.2);
+            border: 1px solid rgba(100, 100, 100, 0.3);
+            color: #666666;
+        }
+
+        /* Combat stats */
+        .combat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 6px;
+        }
+
+        .combat-stat {
+            text-align: center;
+            padding: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+        }
+
+        .combat-number {
+            font-size: 18px;
+            font-weight: bold;
+            color: #ffaa33;
+            text-shadow: 0 0 10px rgba(255, 170, 50, 0.5);
+        }
+
+        .combat-label {
+            font-size: 10px;
+            color: #888888;
+            text-transform: uppercase;
+        }
+
+        /* Scene info */
+        .scene-name {
+            font-size: 14px;
+            color: #88ddff;
+            text-shadow: 0 0 8px rgba(136, 221, 255, 0.5);
+        }
+
+        .scene-time {
+            font-size: 12px;
+            color: #aaaaaa;
+        }
+
+        /* Recent events */
+        .event-list {
+            max-height: 80px;
+            overflow-y: auto;
+            font-size: 11px;
+            color: #cccccc;
+        }
+
+        .event-item {
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .event-time {
+            color: #666666;
+            margin-right: 6px;
+        }
+
+        /* Connection status */
+        .connection-status {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #33ff33;
+            box-shadow: 0 0 10px rgba(50, 255, 50, 0.8);
+            animation: pulse 2s infinite;
+        }
+
+        .connection-status.disconnected {
+            background: #ff3333;
+            box-shadow: 0 0 10px rgba(255, 50, 50, 0.8);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        /* Minimize scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus"></div>
+    <div class="container">
+        <!-- Player Status Panel -->
+        <div class="panel">
+            <div class="panel-title">Player Status</div>
+
+            <!-- Health -->
+            <div class="health-bar">
+                <div class="health-fill" id="healthFill" style="width: 100%"></div>
+                <div class="health-text" id="healthText">5/5</div>
+            </div>
+
+            <!-- Soul/MP -->
+            <div class="soul-bar">
+                <div class="soul-fill" id="soulFill" style="width: 0%"></div>
+            </div>
+
+            <!-- Position & Speed -->
+            <div class="stat-row">
+                <span class="stat-label">Position</span>
+                <span class="stat-value" id="position">0.0, 0.0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Speed</span>
+                <span class="stat-value">
+                    <span id="speed">0.0</span>
+                    <span id="speedIndicator" class="speed-indicator">→</span>
+                </span>
+            </div>
+
+            <!-- Status Indicators -->
+            <div class="status-indicators">
+                <span class="status-badge status-inactive" id="groundedStatus">GROUNDED</span>
+                <span class="status-badge status-inactive" id="dashingStatus">DASHING</span>
+                <span class="status-badge status-inactive" id="attackingStatus">ATTACKING</span>
+            </div>
+        </div>
+
+        <!-- Combat Stats Panel -->
+        <div class="panel">
+            <div class="panel-title">Combat Stats</div>
+            <div class="combat-grid">
+                <div class="combat-stat">
+                    <div class="combat-number" id="damageDealt">0</div>
+                    <div class="combat-label">Damage Dealt</div>
+                </div>
+                <div class="combat-stat">
+                    <div class="combat-number" id="damageTaken">0</div>
+                    <div class="combat-label">Damage Taken</div>
+                </div>
+                <div class="combat-stat">
+                    <div class="combat-number" id="enemiesKilled">0</div>
+                    <div class="combat-label">Enemies Killed</div>
+                </div>
+                <div class="combat-stat">
+                    <div class="combat-number" id="totalDistance">0</div>
+                    <div class="combat-label">Distance (m)</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scene Info Panel -->
+        <div class="panel">
+            <div class="panel-title">Scene Info</div>
+            <div class="stat-row">
+                <span class="scene-name" id="sceneName">Menu_Title</span>
+            </div>
+            <div class="stat-row">
+                <span class="scene-time" id="sceneTime">Time in scene: 0:00</span>
+            </div>
+        </div>
+
+        <!-- Session Stats Panel -->
+        <div class="panel">
+            <div class="panel-title">Session</div>
+            <div class="stat-row">
+                <span class="stat-label">Session Time</span>
+                <span class="stat-value" id="sessionTime">0:00:00</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">FPS</span>
+                <span class="stat-value" id="fps">60</span>
+            </div>
+        </div>
+
+        <!-- Recent Events Panel -->
+        <div class="panel">
+            <div class="panel-title">Recent Events</div>
+            <div class="event-list" id="eventList">
+                <div class="event-item">Waiting for events...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const WS_URL = 'ws://0.0.0.0:9091';
+        const HTTP_URL = 'http://0.0.0.0:8080';
+        const RECONNECT_DELAY = 5000;
+        const POLLING_INTERVAL = 50; // 50ms = 20 updates per second
+
+        // State
+        let ws = null;
+        let isConnected = false;
+        let recentEvents = [];
+        let maxEvents = 5;
+        let combatStats = {
+            damageDealt: 0,
+            damageTaken: 0,
+            enemiesKilled: 0,
+            totalDistance: 0
+        };
+
+        // Elements
+        const elements = {
+            connectionStatus: document.getElementById('connectionStatus'),
+            healthFill: document.getElementById('healthFill'),
+            healthText: document.getElementById('healthText'),
+            soulFill: document.getElementById('soulFill'),
+            position: document.getElementById('position'),
+            speed: document.getElementById('speed'),
+            speedIndicator: document.getElementById('speedIndicator'),
+            groundedStatus: document.getElementById('groundedStatus'),
+            dashingStatus: document.getElementById('dashingStatus'),
+            attackingStatus: document.getElementById('attackingStatus'),
+            damageDealt: document.getElementById('damageDealt'),
+            damageTaken: document.getElementById('damageTaken'),
+            enemiesKilled: document.getElementById('enemiesKilled'),
+            totalDistance: document.getElementById('totalDistance'),
+            sceneName: document.getElementById('sceneName'),
+            sceneTime: document.getElementById('sceneTime'),
+            sessionTime: document.getElementById('sessionTime'),
+            fps: document.getElementById('fps'),
+            eventList: document.getElementById('eventList')
+        };
+
+        // WebSocket connection
+        function connectWebSocket() {
+            try {
+                ws = new WebSocket(WS_URL);
+
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    isConnected = true;
+                    elements.connectionStatus.classList.remove('disconnected');
+                    addEvent('WebSocket connected');
+                };
+
+                ws.onmessage = (event) => {
+                    console.log('WebSocket message received:', event.data);
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleMetric(data);
+                    } catch (err) {
+                        console.error('Error parsing message:', err, 'Raw data:', event.data);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    addEvent('WebSocket error');
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    isConnected = false;
+                    elements.connectionStatus.classList.add('disconnected');
+                    addEvent('WebSocket disconnected');
+                    setTimeout(connectWebSocket, RECONNECT_DELAY);
+                };
+            } catch (err) {
+                console.error('Failed to connect WebSocket:', err);
+                setTimeout(connectWebSocket, RECONNECT_DELAY);
+            }
+        }
+
+        // Handle incoming metrics
+        function handleMetric(metric) {
+            const eventType = metric.EventType;
+            const data = metric.Data;
+
+            console.log('Handling metric:', eventType, data);
+
+            switch (eventType) {
+                case 'player_update':
+                    updatePlayerStatus(data);
+                    break;
+                case 'combat_damage':
+                    handleCombatDamage(data);
+                    break;
+                case 'enemy_damaged':
+                    combatStats.damageDealt += data.damage || 0;
+                    elements.damageDealt.textContent = combatStats.damageDealt;
+                    addEvent(`Dealt ${data.damage} damage to ${data.enemy_name || 'enemy'}`);
+                    break;
+                case 'enemy_killed':
+                    combatStats.enemiesKilled = data.total_kills || combatStats.enemiesKilled;
+                    elements.enemiesKilled.textContent = combatStats.enemiesKilled;
+                    addEvent(`Killed ${data.enemy_name || 'enemy'}`);
+                    break;
+                case 'scene_transition':
+                    updateScene(data);
+                    break;
+                case 'scene_update':
+                    updateSceneTime(data);
+                    break;
+                case 'timing_update':
+                    updateTiming(data);
+                    break;
+                case 'item_collected':
+                    addEvent(`Collected ${data.item_name} x${data.quantity || 1}`);
+                    break;
+                case 'ability_unlocked':
+                    addEvent(`Unlocked ${data.ability_name}`);
+                    break;
+                case 'boss_event':
+                    addEvent(`Boss ${data.event_type}: ${data.boss_name}`);
+                    break;
+            }
+        }
+
+        // Update player status
+        function updatePlayerStatus(data) {
+            // Health
+            const currentHealth = data.health_current || 0;
+            const maxHealth = data.health_max || 5;
+            const healthPercent = maxHealth > 0 ? (currentHealth / maxHealth) * 100 : 0;
+            elements.healthFill.style.width = `${healthPercent}%`;
+            elements.healthText.textContent = `${currentHealth}/${maxHealth}`;
+
+            // Soul/MP
+            const currentSoul = data.soul_current || 0;
+            const maxSoul = data.soul_max || 100;
+            const soulPercent = maxSoul > 0 ? (currentSoul / maxSoul) * 100 : 0;
+            elements.soulFill.style.width = `${soulPercent}%`;
+
+            // Position
+            const x = (data.position_x || 0).toFixed(1);
+            const y = (data.position_y || 0).toFixed(1);
+            elements.position.textContent = `${x}, ${y}`;
+
+            // Speed
+            const vx = data.velocity_x || 0;
+            const vy = data.velocity_y || 0;
+            const speed = Math.sqrt(vx * vx + vy * vy);
+            elements.speed.textContent = speed.toFixed(1);
+
+            // Speed indicator color
+            elements.speedIndicator.className = 'speed-indicator';
+            if (speed > 20) {
+                elements.speedIndicator.classList.add('speed-very-high');
+                elements.speedIndicator.textContent = '⟫';
+            } else if (speed > 10) {
+                elements.speedIndicator.classList.add('speed-high');
+                elements.speedIndicator.textContent = '»';
+            } else {
+                elements.speedIndicator.textContent = '→';
+            }
+
+            // Status badges
+            updateStatusBadge(elements.groundedStatus, data.grounded);
+            updateStatusBadge(elements.dashingStatus, data.dashing);
+            updateStatusBadge(elements.attackingStatus, data.attacking);
+
+            // Total distance
+            if (data.total_distance !== undefined) {
+                combatStats.totalDistance = data.total_distance;
+                elements.totalDistance.textContent = Math.floor(combatStats.totalDistance);
+            }
+        }
+
+        // Update status badge
+        function updateStatusBadge(element, isActive) {
+            if (isActive) {
+                element.classList.remove('status-inactive');
+                element.classList.add('status-active');
+            } else {
+                element.classList.remove('status-active');
+                element.classList.add('status-inactive');
+            }
+        }
+
+        // Handle combat damage
+        function handleCombatDamage(data) {
+            if (data.target === 'player') {
+                combatStats.damageTaken += data.damage || 0;
+                elements.damageTaken.textContent = combatStats.damageTaken;
+                addEvent(`Took ${data.damage} damage`);
+            }
+        }
+
+        // Update scene
+        function updateScene(data) {
+            elements.sceneName.textContent = data.scene_name || 'Unknown';
+            addEvent(`Entered ${data.scene_name}`);
+        }
+
+        // Update scene time
+        function updateSceneTime(data) {
+            if (data.time_in_scene !== undefined) {
+                const minutes = Math.floor(data.time_in_scene / 60);
+                const seconds = Math.floor(data.time_in_scene % 60);
+                elements.sceneTime.textContent = `Time in scene: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+        }
+
+        // Update timing
+        function updateTiming(data) {
+            // Session time
+            if (data.session_time !== undefined) {
+                const hours = Math.floor(data.session_time / 3600);
+                const minutes = Math.floor((data.session_time % 3600) / 60);
+                const seconds = Math.floor(data.session_time % 60);
+                elements.sessionTime.textContent =
+                    `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+
+            // FPS
+            if (data.fps !== undefined) {
+                elements.fps.textContent = Math.round(data.fps);
+            }
+        }
+
+        // Add event to list
+        function addEvent(text) {
+            const now = new Date();
+            const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+            recentEvents.unshift({ time: timeStr, text: text });
+            if (recentEvents.length > maxEvents) {
+                recentEvents = recentEvents.slice(0, maxEvents);
+            }
+
+            updateEventList();
+        }
+
+        // Update event list display
+        function updateEventList() {
+            if (recentEvents.length === 0) {
+                elements.eventList.innerHTML = '<div class="event-item">No recent events</div>';
+                return;
+            }
+
+            elements.eventList.innerHTML = recentEvents.map(event =>
+                `<div class="event-item">
+                    <span class="event-time">${event.time}</span>
+                    ${event.text}
+                </div>`
+            ).join('');
+        }
+
+        // Fallback HTTP polling (always runs for testing)
+        async function pollHttpData() {
+            try {
+                const response = await fetch(`${HTTP_URL}/api/metrics`);
+                if (response.ok) {
+                    const metrics = await response.json();
+                    console.log('HTTP poll received:', metrics.length, 'metrics');
+                    if (metrics && metrics.length > 0) {
+                        // Process the most recent metric of each type
+                        const latestByType = {};
+                        metrics.forEach(metric => {
+                            latestByType[metric.EventType] = metric;
+                        });
+
+                        // Handle each metric type
+                        Object.values(latestByType).forEach(metric => {
+                            handleMetric(metric);
+                        });
+                    }
+                } else {
+                    console.error('HTTP response not ok:', response.status);
+                }
+            } catch (err) {
+                console.error('HTTP polling error:', err);
+                // Try to connect anyway
+                if (!isConnected) {
+                    addEvent('Connection lost - retrying...');
+                }
+            }
+        }
+
+        // Initialize
+        function init() {
+            connectWebSocket();
+
+            // Fallback HTTP polling
+            setInterval(pollHttpData, POLLING_INTERVAL);
+
+            // Initial event
+            addEvent('Overlay started');
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>

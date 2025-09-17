@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Silksong Fast Stats</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: transparent;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid rgba(100, 150, 255, 0.5);
+            border-radius: 10px;
+            padding: 15px;
+            max-width: 300px;
+        }
+
+        .stat {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+        }
+
+        .label {
+            color: #aaa;
+        }
+
+        .value {
+            color: #fff;
+            font-weight: bold;
+            transition: color 0.1s ease;
+        }
+
+        .value.changed {
+            color: #ffff00;
+        }
+
+        .health-bar {
+            height: 20px;
+            background: rgba(50, 50, 50, 0.8);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+            position: relative;
+        }
+
+        .health-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff3333, #ff6666);
+            transition: width 0.1s ease;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .update-rate {
+            font-size: 10px;
+            color: #666;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h3 style="margin-bottom: 10px; text-align: center; color: #88aaff;">FAST STATS</h3>
+
+        <div class="health-bar">
+            <div class="health-fill" id="healthBar" style="width: 100%"></div>
+        </div>
+
+        <div class="stat">
+            <span class="label">Health</span>
+            <span class="value" id="health">-/-</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Position</span>
+            <span class="value" id="position">-, -</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Speed</span>
+            <span class="value" id="speed">0.0</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Grounded</span>
+            <span class="value" id="grounded">Yes</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Distance</span>
+            <span class="value" id="distance">0m</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Session</span>
+            <span class="value" id="session">0:00</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">FPS</span>
+            <span class="value" id="fps">60</span>
+        </div>
+
+        <div class="status" id="status">
+            <span style="color: #66ff66">Connecting...</span>
+        </div>
+
+        <div class="update-rate" id="updateRate">0 Hz</div>
+    </div>
+
+    <script>
+        let lastUpdateTime = 0;
+        let updateCount = 0;
+        let updateRate = 0;
+        let lastRateCalc = Date.now();
+        let isUpdating = false;
+        let previousValues = {};
+
+        // Track changes and flash values when they change
+        function updateValue(elementId, newValue) {
+            const element = document.getElementById(elementId);
+            if (element) {
+                const oldValue = element.textContent;
+                if (oldValue !== newValue) {
+                    element.textContent = newValue;
+                    element.classList.add('changed');
+                    setTimeout(() => element.classList.remove('changed'), 100);
+                }
+            }
+        }
+
+        async function fetchMetrics() {
+            if (isUpdating) return;
+            isUpdating = true;
+
+            try {
+                // Use AbortController for timeout
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30);
+
+                const response = await fetch(`http://0.0.0.0:8080/api/metrics?t=${Date.now()}`, {
+                    signal: controller.signal,
+                    cache: 'no-cache'
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const metrics = await response.json();
+
+                if (metrics && metrics.length > 0) {
+                    // Process latest metrics
+                    const playerUpdate = metrics.find(m => m.EventType === 'player_update');
+                    const timingUpdate = metrics.find(m => m.EventType === 'timing_update');
+
+                    if (playerUpdate && playerUpdate.Data) {
+                        const data = playerUpdate.Data;
+
+                        // Update health
+                        const currentHealth = data.health_current || 0;
+                        const maxHealth = data.health_max || 5;
+                        updateValue('health', `${currentHealth}/${maxHealth}`);
+
+                        // Update health bar
+                        const healthPercent = maxHealth > 0 ? (currentHealth / maxHealth) * 100 : 0;
+                        document.getElementById('healthBar').style.width = `${healthPercent}%`;
+
+                        // Update position
+                        const x = (data.position_x || 0).toFixed(1);
+                        const y = (data.position_y || 0).toFixed(1);
+                        updateValue('position', `${x}, ${y}`);
+
+                        // Update speed
+                        const vx = data.velocity_x || 0;
+                        const vy = data.velocity_y || 0;
+                        const speed = Math.sqrt(vx * vx + vy * vy);
+                        updateValue('speed', speed.toFixed(1));
+
+                        // Update grounded status
+                        updateValue('grounded', data.grounded ? 'Yes' : 'No');
+
+                        // Update distance
+                        const distance = data.total_distance || 0;
+                        updateValue('distance', `${Math.floor(distance)}m`);
+                    }
+
+                    if (timingUpdate && timingUpdate.Data) {
+                        const data = timingUpdate.Data;
+
+                        // Update session time
+                        if (data.session_time) {
+                            const totalSeconds = Math.floor(data.session_time);
+                            const minutes = Math.floor(totalSeconds / 60);
+                            const seconds = totalSeconds % 60;
+                            updateValue('session', `${minutes}:${seconds.toString().padStart(2, '0')}`);
+                        }
+
+                        // Update FPS
+                        if (data.fps) {
+                            updateValue('fps', Math.round(data.fps).toString());
+                        }
+                    }
+
+                    // Update status
+                    updateCount++;
+                    document.getElementById('status').innerHTML =
+                        `<span style="color: #66ff66">Connected ✓</span>`;
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    console.error('Fetch error:', error);
+                    document.getElementById('status').innerHTML =
+                        `<span style="color: #ff6666">Error: ${error.message}</span>`;
+                }
+            } finally {
+                isUpdating = false;
+            }
+
+            // Calculate update rate
+            const now = Date.now();
+            if (now - lastRateCalc >= 1000) {
+                updateRate = updateCount;
+                updateCount = 0;
+                lastRateCalc = now;
+                document.getElementById('updateRate').textContent = `${updateRate} Hz`;
+            }
+        }
+
+        // Animation loop for maximum smoothness
+        function animationLoop(timestamp) {
+            // Target 30 FPS (33ms between updates)
+            if (timestamp - lastUpdateTime >= 33) {
+                fetchMetrics();
+                lastUpdateTime = timestamp;
+            }
+            requestAnimationFrame(animationLoop);
+        }
+
+        // Start the animation loop
+        requestAnimationFrame(animationLoop);
+
+        // Also use a fallback interval in case requestAnimationFrame slows down
+        setInterval(fetchMetrics, 33);
+
+        console.log('Fast widget started - using requestAnimationFrame + 30Hz polling');
+    </script>
+</body>
+</html>

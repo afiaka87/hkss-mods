@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Silksong Simple Stats</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: transparent;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid rgba(100, 150, 255, 0.5);
+            border-radius: 10px;
+            padding: 15px;
+            max-width: 300px;
+        }
+
+        .stat {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+        }
+
+        .label {
+            color: #aaa;
+        }
+
+        .value {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        .health-bar {
+            height: 20px;
+            background: rgba(50, 50, 50, 0.8);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+            position: relative;
+        }
+
+        .health-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff3333, #ff6666);
+            transition: width 0.3s ease;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .error {
+            color: #ff6666;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        .success {
+            color: #66ff66;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h3 style="margin-bottom: 10px; text-align: center; color: #88aaff;">SILKSONG STATS</h3>
+
+        <div class="health-bar">
+            <div class="health-fill" id="healthBar" style="width: 100%"></div>
+        </div>
+
+        <div class="stat">
+            <span class="label">Health</span>
+            <span class="value" id="health">-/-</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Position</span>
+            <span class="value" id="position">-, -</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Speed</span>
+            <span class="value" id="speed">0.0</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Distance</span>
+            <span class="value" id="distance">0m</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">Session</span>
+            <span class="value" id="session">0:00</span>
+        </div>
+
+        <div class="stat">
+            <span class="label">FPS</span>
+            <span class="value" id="fps">60</span>
+        </div>
+
+        <div class="status" id="status">
+            <span class="success">Connecting...</span>
+        </div>
+    </div>
+
+    <script>
+        let updateCount = 0;
+        let lastError = '';
+        let isUpdating = false; // Prevent overlapping requests
+
+        async function updateStats() {
+            // Skip if previous request still running
+            if (isUpdating) return;
+            isUpdating = true;
+
+            const statusEl = document.getElementById('status');
+
+            try {
+                // Direct HTTP fetch with cache busting to ensure fresh data
+                const response = await fetch(`http://0.0.0.0:8080/api/metrics?t=${Date.now()}`);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const metrics = await response.json();
+
+                if (!metrics || metrics.length === 0) {
+                    throw new Error('No metrics received');
+                }
+
+                // Find the latest player_update
+                const playerUpdate = metrics.find(m => m.EventType === 'player_update');
+                const timingUpdate = metrics.find(m => m.EventType === 'timing_update');
+
+                if (playerUpdate && playerUpdate.Data) {
+                    const data = playerUpdate.Data;
+
+                    // Update health
+                    const currentHealth = data.health_current || 0;
+                    const maxHealth = data.health_max || 5;
+                    document.getElementById('health').textContent = `${currentHealth}/${maxHealth}`;
+
+                    // Update health bar
+                    const healthPercent = maxHealth > 0 ? (currentHealth / maxHealth) * 100 : 0;
+                    document.getElementById('healthBar').style.width = `${healthPercent}%`;
+
+                    // Update position
+                    const x = (data.position_x || 0).toFixed(1);
+                    const y = (data.position_y || 0).toFixed(1);
+                    document.getElementById('position').textContent = `${x}, ${y}`;
+
+                    // Update speed
+                    const vx = data.velocity_x || 0;
+                    const vy = data.velocity_y || 0;
+                    const speed = Math.sqrt(vx * vx + vy * vy);
+                    document.getElementById('speed').textContent = speed.toFixed(1);
+
+                    // Update distance
+                    const distance = data.total_distance || 0;
+                    document.getElementById('distance').textContent = `${Math.floor(distance)}m`;
+                }
+
+                if (timingUpdate && timingUpdate.Data) {
+                    const data = timingUpdate.Data;
+
+                    // Update session time
+                    if (data.session_time) {
+                        const totalSeconds = Math.floor(data.session_time);
+                        const minutes = Math.floor(totalSeconds / 60);
+                        const seconds = totalSeconds % 60;
+                        document.getElementById('session').textContent =
+                            `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                    }
+
+                    // Update FPS
+                    if (data.fps) {
+                        document.getElementById('fps').textContent = Math.round(data.fps);
+                    }
+                }
+
+                updateCount++;
+                statusEl.innerHTML = `<span class="success">Connected ✓ (${updateCount} updates)</span>`;
+                lastError = '';
+
+            } catch (error) {
+                const errorMsg = error.message;
+                if (errorMsg !== lastError) {
+                    console.error('Update error:', error);
+                    statusEl.innerHTML = `<span class="error">Error: ${errorMsg}</span>`;
+                    lastError = errorMsg;
+                }
+            } finally {
+                isUpdating = false;
+            }
+        }
+
+        // Initial update
+        updateStats();
+
+        // Update every 50ms (20 times per second) for real-time feel
+        setInterval(updateStats, 50);
+
+        console.log('Simple widget started - polling http://0.0.0.0:8080/api/metrics every 50ms (20Hz)');
+    </script>
+</body>
+</html>
