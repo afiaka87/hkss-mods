@@ -3,6 +3,12 @@ using UnityEngine;
 
 namespace HKSS.DamageNumbers
 {
+    public enum DamageType
+    {
+        Enemy,
+        Player
+    }
+
     public class DamageNumberDisplay : MonoBehaviour
     {
         private static DamageNumberDisplay instance;
@@ -17,6 +23,8 @@ namespace HKSS.DamageNumbers
             public Vector3 velocity;
             public float scale;
             public Color color;
+            public DamageType type;
+            public float pulseTimer;
         }
 
         private void Awake()
@@ -29,35 +37,48 @@ namespace HKSS.DamageNumbers
         {
             normalStyle = new GUIStyle();
             normalStyle.fontSize = (int)DamageNumbersPlugin.FontSize.Value;
-            normalStyle.normal.textColor = ParseColor(DamageNumbersPlugin.NormalColor.Value);
             normalStyle.alignment = TextAnchor.MiddleCenter;
             normalStyle.fontStyle = FontStyle.Bold;
         }
 
-        public static void ShowDamage(Vector3 worldPosition, int damage)
+        public static void ShowDamage(Vector3 worldPosition, int damage, DamageType type = DamageType.Enemy)
         {
             if (instance == null || !DamageNumbersPlugin.Enabled.Value)
                 return;
 
-            instance.SpawnDamageNumber(worldPosition, damage);
+            instance.SpawnDamageNumber(worldPosition, damage, type);
         }
 
-        private void SpawnDamageNumber(Vector3 worldPosition, int damage)
+        private void SpawnDamageNumber(Vector3 worldPosition, int damage, DamageType type)
         {
             var number = new DamageNumber
             {
                 worldPosition = worldPosition + Vector3.up * 0.5f,
-                lifetime = DamageNumbersPlugin.DisplayDuration.Value
+                lifetime = DamageNumbersPlugin.DisplayDuration.Value,
+                type = type,
+                pulseTimer = 0f
             };
 
             // Set initial velocity with some randomness
             float randomX = Random.Range(-0.5f, 0.5f);
-            number.velocity = new Vector3(randomX, DamageNumbersPlugin.FloatSpeed.Value, 0);
+
+            if (type == DamageType.Enemy)
+            {
+                // Enemy damage floats up energetically (positive feedback)
+                number.velocity = new Vector3(randomX, DamageNumbersPlugin.FloatSpeed.Value * 1.5f, 0);
+                number.color = ParseColor(DamageNumbersPlugin.EnemyDamageColor.Value);
+                number.scale = 1.1f; // Slightly larger for positive emphasis
+            }
+            else // Player damage
+            {
+                // Player damage sinks down (negative feedback)
+                number.velocity = new Vector3(randomX * 1.5f, -DamageNumbersPlugin.FloatSpeed.Value * 0.5f, 0);
+                number.color = ParseColor(DamageNumbersPlugin.PlayerDamageColor.Value);
+                number.scale = 1f;
+            }
 
             // Configure text - show ACTUAL damage value
             number.text = damage.ToString();
-            number.color = ParseColor(DamageNumbersPlugin.NormalColor.Value);
-            number.scale = 1f;
 
             activeNumbers.Add(number);
         }
@@ -87,8 +108,26 @@ namespace HKSS.DamageNumbers
                 // Update position
                 number.worldPosition += number.velocity * Time.deltaTime;
 
-                // Apply gravity to velocity
-                number.velocity.y -= 2f * Time.deltaTime;
+                if (number.type == DamageType.Enemy)
+                {
+                    // Enemy damage: floats up with slight deceleration
+                    number.velocity.y -= 2f * Time.deltaTime;
+
+                    // Slight bounce effect for positive feedback
+                    number.scale = 1.1f + Mathf.Sin(Time.time * 10f) * 0.05f;
+                }
+                else // Player damage
+                {
+                    // Player damage: sinks down with acceleration
+                    number.velocity.y -= 4f * Time.deltaTime;
+
+                    // Pulsing effect for warning emphasis
+                    number.pulseTimer += Time.deltaTime;
+                    number.scale = 1f + Mathf.Sin(number.pulseTimer * 15f) * 0.15f;
+
+                    // Add horizontal shake
+                    number.worldPosition.x += Mathf.Sin(number.pulseTimer * 30f) * 0.02f;
+                }
 
                 // Update color alpha for fade out
                 float alpha = Mathf.Clamp01(number.lifetime / 0.5f);

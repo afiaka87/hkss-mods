@@ -8,7 +8,7 @@ namespace HKSS.DamageNumbers
     [HarmonyPatch(typeof(HealthManager), "TakeDamage")]
     internal static class HealthManager_TakeDamage_Patch
     {
-        private static void Postfix(HealthManager __instance, HitInstance hitInstance)
+        private static void Postfix(HealthManager __instance, in HitInstance hitInstance)
         {
             try
             {
@@ -29,7 +29,7 @@ namespace HKSS.DamageNumbers
                 Vector3 position = __instance.transform.position;
 
                 // Display the ACTUAL damage number - exactly what the game calculated
-                DamageNumberDisplay.ShowDamage(position, actualDamage);
+                DamageNumberDisplay.ShowDamage(position, actualDamage, DamageType.Enemy);
 
                 if (DamageNumbersPlugin.DebugLogging.Value)
                     DamageNumbersPlugin.Log.LogInfo($"Actual damage: {actualDamage}");
@@ -58,8 +58,8 @@ namespace HKSS.DamageNumbers
                 // Get player position
                 Vector3 position = __instance.transform.position;
 
-                // Display damage number
-                DamageNumberDisplay.ShowDamage(position, damageAmount);
+                // Display damage number with player damage type for distinct animation
+                DamageNumberDisplay.ShowDamage(position, damageAmount, DamageType.Player);
 
                 if (DamageNumbersPlugin.DebugLogging.Value)
                     DamageNumbersPlugin.Log.LogInfo($"Player took {damageAmount} damage from {hazardType}");

@@ -22,7 +22,8 @@ namespace HKSS.DamageNumbers
         internal static ConfigEntry<float> DisplayDuration;
         internal static ConfigEntry<float> FloatSpeed;
         internal static ConfigEntry<float> FontSize;
-        internal static ConfigEntry<string> NormalColor;
+        internal static ConfigEntry<string> EnemyDamageColor;
+        internal static ConfigEntry<string> PlayerDamageColor;
         internal static ConfigEntry<bool> ShowPlayerDamage;
         internal static ConfigEntry<bool> DebugLogging;
 
@@ -86,17 +87,24 @@ namespace HKSS.DamageNumbers
                 )
             );
 
-            NormalColor = Config.Bind(
+            EnemyDamageColor = Config.Bind(
                 "Colors",
-                "NormalDamageColor",
-                "#FFFFFF",
-                "Color for normal damage numbers (hex format)"
+                "EnemyDamageColor",
+                "#FFD700",
+                "Color for enemy damage numbers (hex format) - Golden color for positive feedback"
+            );
+
+            PlayerDamageColor = Config.Bind(
+                "Colors",
+                "PlayerDamageColor",
+                "#DC143C",
+                "Color for player damage numbers (hex format) - Crimson color for negative feedback"
             );
 
             ShowPlayerDamage = Config.Bind(
                 "Gameplay",
                 "ShowPlayerDamage",
-                false,
+                true,
                 "Also show damage numbers when the player takes damage"
             );
 
