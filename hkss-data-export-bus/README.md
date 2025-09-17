@@ -3,6 +3,8 @@
 A comprehensive guide for integrating and using the Data Export Bus with Hollow Knight: Silksong.
 All examples are proof-of-concept and not functional but hopefully cover the full span of possible usecases for `data-export-bus`
 
+For installation instructions, see the [main README](../README.md#installation) in the parent directory.
+
 For complete API documentation including all endpoints, message formats, and protocol specifications, see the [API Reference](API.md).
 
 ## Table of Contents
