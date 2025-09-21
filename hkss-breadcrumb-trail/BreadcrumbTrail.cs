@@ -225,11 +225,11 @@ namespace HKSS.BreadcrumbTrail
 
                 // Add shadow effect
                 GUI.color = new Color(0, 0, 0, 0.8f);
-                GUI.Label(new Rect(Screen.width / 2 - 149, Screen.height / 2 - 49, 300, 50),
+                GUI.Label(new Rect(Screen.width / 2 - 149, 49, 300, 50),
                     BreadcrumbPlugin.Instance.TrailVisible ? "Trail: ON" : "Trail: OFF", messageStyle);
 
-                GUI.color = BreadcrumbPlugin.Instance.TrailVisible ? Color.green : Color.red;
-                GUI.Label(new Rect(Screen.width / 2 - 150, Screen.height / 2 - 50, 300, 50),
+                GUI.color = Color.white;
+                GUI.Label(new Rect(Screen.width / 2 - 150, 50, 300, 50),
                     BreadcrumbPlugin.Instance.TrailVisible ? "Trail: ON" : "Trail: OFF", messageStyle);
 
                 GUI.color = Color.white;
