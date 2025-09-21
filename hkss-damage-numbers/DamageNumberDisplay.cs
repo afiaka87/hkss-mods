@@ -14,6 +14,8 @@ namespace HKSS.DamageNumbers
         private static DamageNumberDisplay instance;
         private readonly List<DamageNumber> activeNumbers = new List<DamageNumber>();
         private GUIStyle normalStyle;
+        private Font currentFont;
+        private string lastFontName;
 
         private class DamageNumber
         {
@@ -30,12 +32,23 @@ namespace HKSS.DamageNumbers
         private void Awake()
         {
             instance = this;
-            InitializeStyles();
+            // Don't initialize styles in Awake - GUI context might not be ready
+            // We'll do it lazily in OnGUI
         }
 
         private void InitializeStyles()
         {
+            // Load the configured font
+            string fontName = DamageNumbersPlugin.FontName.Value;
+            currentFont = FontLoader.GetFont(fontName);
+            lastFontName = fontName;
+
             normalStyle = new GUIStyle();
+            if (currentFont != null)
+            {
+                normalStyle.font = currentFont;
+            }
+            // If font is null, GUIStyle will use the default font automatically
             normalStyle.fontSize = CalculateScaledFontSize();
             normalStyle.alignment = TextAnchor.MiddleCenter;
             normalStyle.fontStyle = FontStyle.Bold;
@@ -181,8 +194,15 @@ namespace HKSS.DamageNumbers
             if (!DamageNumbersPlugin.Enabled.Value || Camera.main == null)
                 return;
 
-            // Recalculate base font size if resolution changed
-            if (normalStyle.fontSize != CalculateScaledFontSize())
+            // Initialize styles lazily in OnGUI context if needed
+            if (normalStyle == null)
+            {
+                InitializeStyles();
+            }
+
+            // Recalculate styles if resolution or font changed
+            if (normalStyle != null && (normalStyle.fontSize != CalculateScaledFontSize() ||
+                lastFontName != DamageNumbersPlugin.FontName.Value))
             {
                 InitializeStyles();
             }
@@ -209,13 +229,33 @@ namespace HKSS.DamageNumbers
                 // Scale font size
                 tempStyle.fontSize = (int)(style.fontSize * number.scale);
 
-                // Draw shadow
-                var shadowColor = new Color(0, 0, 0, number.color.a * 0.5f);
-                var shadowStyle = new GUIStyle(tempStyle);
-                shadowStyle.normal.textColor = shadowColor;
+                // Draw outline/shadow if enabled
+                if (DamageNumbersPlugin.UseOutline.Value)
+                {
+                    // Use nearly white outline for dark grey text
+                    var outlineColor = new Color(0.95f, 0.95f, 0.95f, number.color.a * 0.9f);
+                    var outlineStyle = new GUIStyle(tempStyle);
+                    outlineStyle.normal.textColor = outlineColor;
 
-                Rect shadowRect = new Rect(screenPos.x - 50 + 2, screenPos.y - 20 + 2, 100, 40);
-                GUI.Label(shadowRect, number.text, shadowStyle);
+                    float outlineWidth = DamageNumbersPlugin.OutlineWidth.Value;
+
+                    // Draw outline in 8 directions for better visibility
+                    for (int x = -1; x <= 1; x++)
+                    {
+                        for (int y = -1; y <= 1; y++)
+                        {
+                            if (x != 0 || y != 0)
+                            {
+                                Rect outlineRect = new Rect(
+                                    screenPos.x - 50 + (x * outlineWidth),
+                                    screenPos.y - 20 + (y * outlineWidth),
+                                    100, 40
+                                );
+                                GUI.Label(outlineRect, number.text, outlineStyle);
+                            }
+                        }
+                    }
+                }
 
                 // Draw main text
                 Rect rect = new Rect(screenPos.x - 50, screenPos.y - 20, 100, 40);

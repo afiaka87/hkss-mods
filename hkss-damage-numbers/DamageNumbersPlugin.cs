@@ -27,6 +27,10 @@ namespace HKSS.DamageNumbers
         internal static ConfigEntry<string> PlayerDamageColor;
         internal static ConfigEntry<bool> ShowPlayerDamage;
         internal static ConfigEntry<bool> DebugLogging;
+        internal static ConfigEntry<string> FontName;
+        internal static ConfigEntry<string> CustomFontPath;
+        internal static ConfigEntry<bool> UseOutline;
+        internal static ConfigEntry<float> OutlineWidth;
 
         private Harmony harmony;
 
@@ -98,15 +102,15 @@ namespace HKSS.DamageNumbers
             EnemyDamageColor = Config.Bind(
                 "Colors",
                 "EnemyDamageColor",
-                "#FFD700",
-                "Color for enemy damage numbers (hex format) - Golden color for positive feedback"
+                "#3A3A3A",
+                "Color for enemy damage numbers (hex format) - Dark grey for subtle display"
             );
 
             PlayerDamageColor = Config.Bind(
                 "Colors",
                 "PlayerDamageColor",
-                "#DC143C",
-                "Color for player damage numbers (hex format) - Crimson color for negative feedback"
+                "#4A4A4A",
+                "Color for player damage numbers (hex format) - Slightly lighter dark grey"
             );
 
             ShowPlayerDamage = Config.Bind(
@@ -121,6 +125,48 @@ namespace HKSS.DamageNumbers
                 "EnableDebugLogging",
                 false,
                 "Enable detailed logging of damage calculations (useful for understanding game mechanics)"
+            );
+
+            FontName = Config.Bind(
+                "Font",
+                "FontName",
+                "Unity",
+                new ConfigDescription(
+                    "Font to use. Unity=game's font. Basic: Arial, Helvetica, Verdana, Tahoma, Trebuchet, Calibri, Segoe, Futura, Century, Franklin. Gothic/Fantasy: Trajan, Georgia, Times, Garamond, Baskerville, Palatino, Bookman, Perpetua, Copperplate, Didot",
+                    new AcceptableValueList<string>(
+                        "Default", "Unity", "Custom",
+                        // Basic fonts
+                        "Arial", "Helvetica", "Verdana", "Tahoma", "Trebuchet",
+                        "Calibri", "Segoe", "Futura", "Century", "Franklin",
+                        // Gothic/Fantasy fonts
+                        "Trajan", "Georgia", "Times", "Garamond", "Baskerville",
+                        "Palatino", "Bookman", "Perpetua", "Copperplate", "Didot"
+                    )
+                )
+            );
+
+            CustomFontPath = Config.Bind(
+                "Font",
+                "CustomFontPath",
+                "",
+                "Path to custom .ttf or .otf font file (only used when FontName is set to Custom)"
+            );
+
+            UseOutline = Config.Bind(
+                "Font",
+                "UseOutline",
+                true,
+                "Add an outline/shadow effect to damage numbers for better visibility"
+            );
+
+            OutlineWidth = Config.Bind(
+                "Font",
+                "OutlineWidth",
+                2f,
+                new ConfigDescription(
+                    "Width of the outline effect in pixels",
+                    new AcceptableValueRange<float>(1f, 5f)
+                )
             );
         }
 
