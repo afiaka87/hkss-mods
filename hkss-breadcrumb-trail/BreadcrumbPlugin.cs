@@ -15,7 +15,7 @@ namespace HKSS.BreadcrumbTrail
     {
         public const string PLUGIN_GUID = "com.hkss.breadcrumbtrail";
         public const string PLUGIN_NAME = "Breadcrumb Trail";
-        public const string PLUGIN_VERSION = "1.0.0";
+        public const string PLUGIN_VERSION = "0.1.1";
     }
 
     [BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
@@ -52,6 +52,38 @@ namespace HKSS.BreadcrumbTrail
         public ConfigEntry<float> LODFarDistance { get; private set; }
         public ConfigEntry<bool> UseBatchedRenderer { get; private set; }
         public ConfigEntry<bool> ShowOptimizationStats { get; private set; }
+        public ConfigEntry<KeyCode> ToggleKey { get; private set; }
+
+        // Runtime state
+        public bool TrailVisible { get; set; } = true;
+
+        void Update()
+        {
+            // Check for toggle key press
+            if (Input.GetKeyDown(ToggleKey.Value))
+            {
+                TrailVisible = !TrailVisible;
+                Logger.LogInfo($"[BreadcrumbPlugin] Trail visibility toggled to: {TrailVisible}");
+
+                // Update visibility of all trail objects
+                if (trailObject != null)
+                {
+                    var breadcrumbTrail = trailObject.GetComponent<BreadcrumbTrail>();
+                    if (breadcrumbTrail != null)
+                    {
+                        // Show the toggle message
+                        breadcrumbTrail.ShowToggleMessage();
+
+                        var managerObj = GameObject.Find("MultiSceneTrailManager");
+                        if (managerObj != null)
+                        {
+                            var multiSceneManager = managerObj.GetComponent<MultiSceneTrailManager>();
+                            multiSceneManager?.SetTrailsVisible(TrailVisible);
+                        }
+                    }
+                }
+            }
+        }
 
         void Awake()
         {
@@ -272,6 +304,9 @@ namespace HKSS.BreadcrumbTrail
 
             ShowOptimizationStats = Config.Bind("Optimization", "ShowOptimizationStats", false,
                 "Display optimization statistics overlay");
+
+            ToggleKey = Config.Bind("Controls", "ToggleKey", KeyCode.F2,
+                "Key to toggle trail visibility on/off");
         }
 
         public void CreateTrailObject()

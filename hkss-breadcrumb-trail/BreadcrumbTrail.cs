@@ -96,6 +96,10 @@ namespace HKSS.BreadcrumbTrail
             if (!BreadcrumbPlugin.Instance.Enabled.Value)
                 return;
 
+            // Don't update if trail is hidden
+            if (!BreadcrumbPlugin.Instance.TrailVisible)
+                return;
+
             if (trailManager == null)
                 return;
 
@@ -183,8 +187,33 @@ namespace HKSS.BreadcrumbTrail
             // Trail cleanup is now handled by MultiSceneTrailManager
         }
 
+        private float toggleMessageTime = 0f;
+        private const float TOGGLE_MESSAGE_DURATION = 2f;
+
         void OnGUI()
         {
+            // Display toggle message
+            if (Time.time - toggleMessageTime < TOGGLE_MESSAGE_DURATION)
+            {
+                GUIStyle messageStyle = new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    fontSize = 24,
+                    fontStyle = FontStyle.Bold
+                };
+
+                // Add shadow effect
+                GUI.color = new Color(0, 0, 0, 0.8f);
+                GUI.Label(new Rect(Screen.width / 2 - 149, Screen.height / 2 - 49, 300, 50),
+                    BreadcrumbPlugin.Instance.TrailVisible ? "Trail: ON" : "Trail: OFF", messageStyle);
+
+                GUI.color = BreadcrumbPlugin.Instance.TrailVisible ? Color.green : Color.red;
+                GUI.Label(new Rect(Screen.width / 2 - 150, Screen.height / 2 - 50, 300, 50),
+                    BreadcrumbPlugin.Instance.TrailVisible ? "Trail: ON" : "Trail: OFF", messageStyle);
+
+                GUI.color = Color.white;
+            }
+
             // Display optimization statistics overlay if enabled
             if (optimizer != null && BreadcrumbPlugin.Instance.ShowOptimizationStats.Value)
             {
@@ -211,6 +240,11 @@ namespace HKSS.BreadcrumbTrail
 
                 GUI.Box(new Rect(10, 10, 200, 140), statsText, style);
             }
+        }
+
+        public void ShowToggleMessage()
+        {
+            toggleMessageTime = Time.time;
         }
 
         public void ResetOptimizer()

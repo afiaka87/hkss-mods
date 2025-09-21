@@ -262,6 +262,16 @@ namespace HKSS.BreadcrumbTrail
 
         private void ManageVisibleTrails()
         {
+            // Don't show any trails if visibility is toggled off
+            if (!BreadcrumbPlugin.Instance.TrailVisible)
+            {
+                foreach (var kvp in sceneTrailObjects)
+                {
+                    kvp.Value.SetActive(false);
+                }
+                return;
+            }
+
             // Show current scene and nearby scenes
             var activeScenes = new HashSet<string> { currentSceneName };
 
@@ -279,6 +289,26 @@ namespace HKSS.BreadcrumbTrail
             foreach (var kvp in sceneTrailObjects)
             {
                 kvp.Value.SetActive(activeScenes.Contains(kvp.Key));
+            }
+        }
+
+        public void SetTrailsVisible(bool visible)
+        {
+            BreadcrumbPlugin.ModLogger?.LogInfo($"[MultiSceneTrailManager] Setting trail visibility to: {visible}");
+
+            // Update visibility of all trail objects
+            foreach (var kvp in sceneTrailObjects)
+            {
+                if (visible)
+                {
+                    // Use ManageVisibleTrails logic to determine which should be shown
+                    ManageVisibleTrails();
+                    break; // Only need to call once
+                }
+                else
+                {
+                    kvp.Value.SetActive(false);
+                }
             }
         }
 
