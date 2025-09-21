@@ -96,7 +96,28 @@ namespace HKSS.BreadcrumbTrail
             if (!BreadcrumbPlugin.Instance.Enabled.Value)
                 return;
 
-            // Don't update if trail is hidden
+            // Check for toggle key press
+            if (Input.GetKeyDown(BreadcrumbPlugin.Instance.ToggleKey.Value))
+            {
+                BreadcrumbPlugin.Instance.TrailVisible = !BreadcrumbPlugin.Instance.TrailVisible;
+                BreadcrumbPlugin.ModLogger?.LogInfo($"[BreadcrumbTrail] Trail visibility toggled to: {BreadcrumbPlugin.Instance.TrailVisible}");
+
+                // Show the toggle message
+                ShowToggleMessage();
+
+                // Update trail visibility
+                if (trailManager != null)
+                {
+                    var managerObj = GameObject.Find("MultiSceneTrailManager");
+                    if (managerObj != null)
+                    {
+                        var multiSceneManager = managerObj.GetComponent<MultiSceneTrailManager>();
+                        multiSceneManager?.SetTrailsVisible(BreadcrumbPlugin.Instance.TrailVisible);
+                    }
+                }
+            }
+
+            // Don't update trail collection if trail is hidden
             if (!BreadcrumbPlugin.Instance.TrailVisible)
                 return;
 

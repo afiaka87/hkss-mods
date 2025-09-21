@@ -57,34 +57,6 @@ namespace HKSS.BreadcrumbTrail
         // Runtime state
         public bool TrailVisible { get; set; } = true;
 
-        void Update()
-        {
-            // Check for toggle key press
-            if (Input.GetKeyDown(ToggleKey.Value))
-            {
-                TrailVisible = !TrailVisible;
-                Logger.LogInfo($"[BreadcrumbPlugin] Trail visibility toggled to: {TrailVisible}");
-
-                // Update visibility of all trail objects
-                if (trailObject != null)
-                {
-                    var breadcrumbTrail = trailObject.GetComponent<BreadcrumbTrail>();
-                    if (breadcrumbTrail != null)
-                    {
-                        // Show the toggle message
-                        breadcrumbTrail.ShowToggleMessage();
-
-                        var managerObj = GameObject.Find("MultiSceneTrailManager");
-                        if (managerObj != null)
-                        {
-                            var multiSceneManager = managerObj.GetComponent<MultiSceneTrailManager>();
-                            multiSceneManager?.SetTrailsVisible(TrailVisible);
-                        }
-                    }
-                }
-            }
-        }
-
         void Awake()
         {
             try
