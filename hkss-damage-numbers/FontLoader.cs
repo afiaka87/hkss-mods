@@ -324,5 +324,18 @@ namespace HKSS.DamageNumbers
             unityFonts = null;
             discoveryComplete = false;
         }
+
+        // Performance: Preload fonts to avoid first-hit stutter
+        public static void PreloadFont(string fontName)
+        {
+            // Trigger font discovery early if needed
+            if (!discoveryComplete && fontName == "Unity")
+            {
+                DiscoverUnityFonts();
+            }
+
+            // Cache the font early
+            GetFont(fontName);
+        }
     }
 }

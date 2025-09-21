@@ -31,6 +31,7 @@ namespace HKSS.DamageNumbers
         internal static ConfigEntry<string> CustomFontPath;
         internal static ConfigEntry<bool> UseOutline;
         internal static ConfigEntry<float> OutlineWidth;
+        internal static ConfigEntry<float> DamageCooldown;
 
         private Harmony harmony;
 
@@ -130,7 +131,7 @@ namespace HKSS.DamageNumbers
             FontName = Config.Bind(
                 "Font",
                 "FontName",
-                "Unity",
+                "Georgia",
                 new ConfigDescription(
                     "Font to use. Unity=game's font. Basic: Arial, Helvetica, Verdana, Tahoma, Trebuchet, Calibri, Segoe, Futura, Century, Franklin. Gothic/Fantasy: Trajan, Georgia, Times, Garamond, Baskerville, Palatino, Bookman, Perpetua, Copperplate, Didot",
                     new AcceptableValueList<string>(
@@ -166,6 +167,16 @@ namespace HKSS.DamageNumbers
                 new ConfigDescription(
                     "Width of the outline effect in pixels",
                     new AcceptableValueRange<float>(1f, 5f)
+                )
+            );
+
+            DamageCooldown = Config.Bind(
+                "Gameplay",
+                "DamageCooldown",
+                0.5f,
+                new ConfigDescription(
+                    "Minimum time between damage numbers for the same enemy (prevents spam from overlapping hitboxes)",
+                    new AcceptableValueRange<float>(0f, 2f)
                 )
             );
         }

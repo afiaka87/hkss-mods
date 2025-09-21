@@ -16,6 +16,11 @@ namespace HKSS.DamageNumbers
         private GUIStyle normalStyle;
         private Font currentFont;
         private string lastFontName;
+        private int lastFontSize = -1;
+
+        // Performance: Pre-allocate styles to avoid GC pressure
+        private readonly Dictionary<int, GUIStyle> styleCache = new Dictionary<int, GUIStyle>();
+        private readonly Dictionary<int, GUIStyle> outlineStyleCache = new Dictionary<int, GUIStyle>();
 
         private class DamageNumber
         {
@@ -34,22 +39,51 @@ namespace HKSS.DamageNumbers
             instance = this;
             // Don't initialize styles in Awake - GUI context might not be ready
             // We'll do it lazily in OnGUI
+
+            // Performance: Trigger font discovery early to avoid first-attack stutter
+            StartCoroutine(PreloadFontsCoroutine());
+        }
+
+        private System.Collections.IEnumerator PreloadFontsCoroutine()
+        {
+            // Wait a frame to ensure everything is initialized
+            yield return null;
+
+            // Preload the font to avoid stutter on first damage
+            string fontName = DamageNumbersPlugin.FontName.Value;
+            FontLoader.PreloadFont(fontName);
         }
 
         private void InitializeStyles()
         {
+            // Clear style caches when reinitializing
+            styleCache.Clear();
+            outlineStyleCache.Clear();
+
             // Load the configured font
             string fontName = DamageNumbersPlugin.FontName.Value;
             currentFont = FontLoader.GetFont(fontName);
             lastFontName = fontName;
+            lastFontSize = CalculateScaledFontSize();
+
+            // Log font loading for debugging
+            if (currentFont != null)
+            {
+                DamageNumbersPlugin.Log.LogInfo($"Font loaded successfully: {fontName} -> {currentFont.name}");
+            }
+            else
+            {
+                DamageNumbersPlugin.Log.LogInfo($"Font not loaded, using default for: {fontName}");
+            }
 
             normalStyle = new GUIStyle();
             if (currentFont != null)
             {
                 normalStyle.font = currentFont;
+                DamageNumbersPlugin.Log.LogInfo($"Font applied to style: {normalStyle.font?.name ?? "null"}");
             }
             // If font is null, GUIStyle will use the default font automatically
-            normalStyle.fontSize = CalculateScaledFontSize();
+            normalStyle.fontSize = lastFontSize;
             normalStyle.alignment = TextAnchor.MiddleCenter;
             normalStyle.fontStyle = FontStyle.Bold;
         }
@@ -200,8 +234,9 @@ namespace HKSS.DamageNumbers
                 InitializeStyles();
             }
 
-            // Recalculate styles if resolution or font changed
-            if (normalStyle != null && (normalStyle.fontSize != CalculateScaledFontSize() ||
+            // Only recalculate if actually changed (cache the font size)
+            int currentFontSize = CalculateScaledFontSize();
+            if (normalStyle != null && (lastFontSize != currentFontSize ||
                 lastFontName != DamageNumbersPlugin.FontName.Value))
             {
                 InitializeStyles();
@@ -219,42 +254,22 @@ namespace HKSS.DamageNumbers
                 // Flip Y coordinate (GUI uses top-left origin)
                 screenPos.y = Screen.height - screenPos.y;
 
-                // Set up style
-                GUIStyle style = normalStyle;
-
-                // Create a copy to modify color
-                var tempStyle = new GUIStyle(style);
-                tempStyle.normal.textColor = number.color;
-
-                // Scale font size
-                tempStyle.fontSize = (int)(style.fontSize * number.scale);
+                // Performance: Use cached styles instead of creating new ones
+                int scaledFontSize = (int)(normalStyle.fontSize * number.scale);
+                GUIStyle tempStyle = GetCachedStyle(scaledFontSize, number.color);
 
                 // Draw outline/shadow if enabled
                 if (DamageNumbersPlugin.UseOutline.Value)
                 {
                     // Use nearly white outline for dark grey text
                     var outlineColor = new Color(0.95f, 0.95f, 0.95f, number.color.a * 0.9f);
-                    var outlineStyle = new GUIStyle(tempStyle);
-                    outlineStyle.normal.textColor = outlineColor;
+                    GUIStyle outlineStyle = GetCachedOutlineStyle(scaledFontSize, outlineColor);
 
                     float outlineWidth = DamageNumbersPlugin.OutlineWidth.Value;
 
-                    // Draw outline in 8 directions for better visibility
-                    for (int x = -1; x <= 1; x++)
-                    {
-                        for (int y = -1; y <= 1; y++)
-                        {
-                            if (x != 0 || y != 0)
-                            {
-                                Rect outlineRect = new Rect(
-                                    screenPos.x - 50 + (x * outlineWidth),
-                                    screenPos.y - 20 + (y * outlineWidth),
-                                    100, 40
-                                );
-                                GUI.Label(outlineRect, number.text, outlineStyle);
-                            }
-                        }
-                    }
+                    // Performance: Only draw 4-direction outline for better performance
+                    // This still looks good but reduces draw calls from 8 to 4
+                    DrawOutline(screenPos, number.text, outlineStyle, outlineWidth);
                 }
 
                 // Draw main text
@@ -278,6 +293,83 @@ namespace HKSS.DamageNumbers
             {
                 instance = null;
             }
+        }
+
+        private GUIStyle GetCachedStyle(int fontSize, Color color)
+        {
+            // Use a simple hash for the cache key
+            int key = fontSize.GetHashCode() ^ color.GetHashCode();
+
+            if (!styleCache.TryGetValue(key, out GUIStyle cachedStyle))
+            {
+                cachedStyle = new GUIStyle(normalStyle);
+                cachedStyle.fontSize = fontSize;
+                if (currentFont != null)
+                {
+                    cachedStyle.font = currentFont;
+                }
+                styleCache[key] = cachedStyle;
+
+                // Limit cache size to prevent memory issues
+                if (styleCache.Count > 50)
+                {
+                    styleCache.Clear();
+                    styleCache[key] = cachedStyle;
+                }
+            }
+
+            // Update color (this is cheap and doesn't allocate)
+            cachedStyle.normal.textColor = color;
+            return cachedStyle;
+        }
+
+        private GUIStyle GetCachedOutlineStyle(int fontSize, Color color)
+        {
+            int key = fontSize.GetHashCode() ^ color.GetHashCode();
+
+            if (!outlineStyleCache.TryGetValue(key, out GUIStyle cachedStyle))
+            {
+                cachedStyle = new GUIStyle(normalStyle);
+                cachedStyle.fontSize = fontSize;
+                if (currentFont != null)
+                {
+                    cachedStyle.font = currentFont;
+                }
+                outlineStyleCache[key] = cachedStyle;
+
+                // Limit cache size
+                if (outlineStyleCache.Count > 50)
+                {
+                    outlineStyleCache.Clear();
+                    outlineStyleCache[key] = cachedStyle;
+                }
+            }
+
+            cachedStyle.normal.textColor = color;
+            return cachedStyle;
+        }
+
+        private void DrawOutline(Vector3 screenPos, string text, GUIStyle outlineStyle, float outlineWidth)
+        {
+            // 4-direction outline (top, bottom, left, right) instead of 8
+            // This reduces draw calls by 50% while still looking good
+            Rect rect;
+
+            // Top
+            rect = new Rect(screenPos.x - 50, screenPos.y - 20 - outlineWidth, 100, 40);
+            GUI.Label(rect, text, outlineStyle);
+
+            // Bottom
+            rect = new Rect(screenPos.x - 50, screenPos.y - 20 + outlineWidth, 100, 40);
+            GUI.Label(rect, text, outlineStyle);
+
+            // Left
+            rect = new Rect(screenPos.x - 50 - outlineWidth, screenPos.y - 20, 100, 40);
+            GUI.Label(rect, text, outlineStyle);
+
+            // Right
+            rect = new Rect(screenPos.x - 50 + outlineWidth, screenPos.y - 20, 100, 40);
+            GUI.Label(rect, text, outlineStyle);
         }
     }
 }
