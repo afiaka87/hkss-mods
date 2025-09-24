@@ -155,7 +155,9 @@ Launch the game. BepInEx will create a `LogOutput.log` file in the BepInEx folde
 
 ## Configuration
 
-After running the game once with the mod, a configuration file will be created at:
+Press **F1** in-game to open the BepInEx Configuration Manager, then click **"Velocity Vector HUD"** from the mod list to access all settings.
+
+Alternatively, after running the game once with the mod, a configuration file will be created at:
 `BepInEx/config/com.hkss.velocityvector.cfg`
 
 ### Configuration Options
@@ -173,6 +175,7 @@ After running the game once with the mod, a configuration file will be created a
 - **ArrowColor**: Color of the direction arrow (hex color)
 - **TextColor**: Color of the text display (hex color)
 - **FontSize**: Font size for text display (12-48)
+- **DpiAwarePadding**: Use DPI-aware padding based on screen resolution (16px for ~720p, 24px for 1440p, 32px for 4K+)
 
 ## Building
 

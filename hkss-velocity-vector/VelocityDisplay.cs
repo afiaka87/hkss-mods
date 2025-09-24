@@ -146,7 +146,7 @@ namespace HKSS.VelocityVector
         private Vector2 GetBasePosition()
         {
             var position = VelocityVectorPlugin.Instance.Position.Value;
-            float margin = 20;
+            float margin = GetDpiAwareMargin();
 
             float x = margin;
             float y = margin;
@@ -156,12 +156,12 @@ namespace HKSS.VelocityVector
                 case DisplayPosition.TopCenter:
                 case DisplayPosition.MiddleCenter:
                 case DisplayPosition.BottomCenter:
-                    x = Screen.width / 2 - 100;
+                    x = Screen.width / 2 - 48;  // Center with 96px width (half is 48px)
                     break;
                 case DisplayPosition.TopRight:
                 case DisplayPosition.MiddleRight:
                 case DisplayPosition.BottomRight:
-                    x = Screen.width - 220;
+                    x = Screen.width - 96 - margin;  // Right-align with 96px offset plus margin
                     break;
             }
 
@@ -175,11 +175,30 @@ namespace HKSS.VelocityVector
                 case DisplayPosition.BottomLeft:
                 case DisplayPosition.BottomCenter:
                 case DisplayPosition.BottomRight:
-                    y = Screen.height - 100;
+                    y = Screen.height - 100 - margin;
                     break;
             }
 
             return new Vector2(x, y);
+        }
+
+        private float GetDpiAwareMargin()
+        {
+            if (!VelocityVectorPlugin.Instance.DpiAwarePadding.Value)
+                return 20f;
+
+            // DPI-aware padding based on screen height
+            // ~720p (Steam Deck is 1280x800): 16px
+            // 1440p: 24px
+            // 4K (2160p): 32px
+            int screenHeight = Screen.height;
+
+            if (screenHeight <= 900)  // ~720p-900p
+                return 16f;
+            else if (screenHeight <= 1600)  // ~1440p
+                return 24f;
+            else  // 4K and above
+                return 32f;
         }
 
         private void InitializeStyles()

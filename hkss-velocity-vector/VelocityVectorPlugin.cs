@@ -33,6 +33,7 @@ namespace HKSS.VelocityVector
         public ConfigEntry<Color> ArrowColor { get; private set; }
         public ConfigEntry<Color> TextColor { get; private set; }
         public ConfigEntry<int> FontSize { get; private set; }
+        public ConfigEntry<bool> DpiAwarePadding { get; private set; }
 
         void Awake()
         {
@@ -71,7 +72,7 @@ namespace HKSS.VelocityVector
             Enabled = Config.Bind("General", "Enabled", true,
                 "Enable or disable the velocity vector display");
 
-            Position = Config.Bind("Display", "Position", DisplayPosition.TopLeft,
+            Position = Config.Bind("Display", "Position", DisplayPosition.TopCenter,
                 "Screen position for the velocity display");
 
             Units = Config.Bind("Display", "Units", DisplayUnits.UnitsPerSecond,
@@ -90,7 +91,7 @@ namespace HKSS.VelocityVector
             ShowNumeric = Config.Bind("Display", "ShowNumeric", true,
                 "Show numeric speed value");
 
-            ArrowColor = Config.Bind("Display", "ArrowColor", Color.cyan,
+            ArrowColor = Config.Bind("Display", "ArrowColor", Color.white,
                 "Color of the direction arrow");
 
             TextColor = Config.Bind("Display", "TextColor", Color.white,
@@ -99,6 +100,9 @@ namespace HKSS.VelocityVector
             FontSize = Config.Bind("Display", "FontSize", 20,
                 new ConfigDescription("Font size for text display",
                 new AcceptableValueRange<int>(12, 48)));
+
+            DpiAwarePadding = Config.Bind("Display", "DpiAwarePadding", true,
+                "Use DPI-aware padding based on screen resolution");
         }
     }
 
